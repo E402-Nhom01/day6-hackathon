@@ -6,3 +6,6 @@ keyboard
 soundfile
 openai-whisper
 whisper
+fastapi
+uvicorn
+python-multipart
