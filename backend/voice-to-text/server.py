@@ -37,6 +37,15 @@ model = whisper.load_model(MODEL_SIZE, device=DEVICE)
 TEMP_DIR = "temp_audio"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+def transcribe_audio_file(file_path: str) -> str:
+    """Transcribe file audio bằng Whisper, trả về text."""
+    result = model.transcribe(
+        file_path, 
+        fp16=torch.cuda.is_available(), 
+        language="vi"
+    )
+    return result['text'].strip()
+
 @app.post(
     "/transcribe", 
     response_model=TranscribeResponse,
@@ -57,15 +66,11 @@ async def transcribe_audio(
             shutil.copyfileobj(file.file, buffer)
 
         # Transcribe
-        result = model.transcribe(
-            file_path, 
-            fp16=torch.cuda.is_available(), 
-            language="vi"
-        )
+        transcript = transcribe_audio_file(file_path)
         
         return {
             "filename": file.filename,
-            "transcript": result['text'].strip()
+            "transcript": transcript
         }
 
     except Exception as e:

@@ -91,6 +91,44 @@ builder.add_edge("tools", "agent")
 
 graph = builder.compile()
 
+# ========================
+# LƯU TRỮ CHAT HISTORY THEO SESSION
+# ========================
+chat_sessions: dict[str, list] = {}
+
+def run_agent(user_text: str, session_id: str = "default") -> str:
+    """Đưa text vào LangGraph agent và trả về response."""
+    if session_id not in chat_sessions:
+        chat_sessions[session_id] = []
+
+    chat_history = chat_sessions[session_id]
+    chat_history.append(("human", user_text))
+
+    write_log("User", user_text)
+
+    result = graph.invoke({"messages": chat_history})
+    chat_history = result["messages"]
+    chat_sessions[session_id] = chat_history
+
+    # Trích xuất text từ message cuối cùng
+    final = chat_history[-1]
+    text = ""
+    if isinstance(final.content, list):
+        for item in final.content:
+            if isinstance(item, dict) and "text" in item:
+                text += item["text"] + " "
+            elif isinstance(item, str):
+                text += item + " "
+    else:
+        text = str(final.content)
+
+    text = text.strip()
+    if not text:
+        text = "(Đang tra cứu dữ liệu...)"
+
+    write_log("SM Buddy", text)
+    return text
+
 # 6. Chat loop 
 if __name__ == "__main__":
     greeting_msg = "Chào bạn! Mình là trợ lý hỗ trợ đặt xe. Bạn đang muốn đi đâu hoặc có ngân sách bao nhiêu? 😊"
