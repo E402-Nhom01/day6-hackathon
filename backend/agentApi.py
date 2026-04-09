@@ -105,74 +105,45 @@ async def call_booking_api(agent_reply_str: str):
 # API ENDPOINTS
 # ========================
 
-@app.post(
-    "/voice-agent",
-    summary="Voice → Text → Agent",
-    description="Nhận file âm thanh, transcribe bằng Whisper, rồi đưa vào Agent xử lý.",
-)
+@app.post("/voice-agent")
 async def voice_agent(
     file: UploadFile = File(..., description="File âm thanh (mp3, wav, m4a, flac)"),
     session_id: str = "default",
 ):
-    # Validate file format
-    if not file.filename.lower().endswith((".mp3", ".wav", ".m4a", ".flac")):
-        raise HTTPException(
-            status_code=400,
-            detail="Định dạng file không được hỗ trợ. Chỉ chấp nhận: mp3, wav, m4a, flac.",
-        )
-
     file_path = os.path.join(TEMP_DIR, f"{session_id}_{file.filename}")
 
     try:
-        print("[DEBUG] Bước 1: Bắt đầu xử lý file tạm")
         # 1. Lưu file tạm
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        print(f"[DEBUG] Bước 2: Bắt đầu Transcribe từ {file_path}")
         # 2. Transcribe audio → text
         transcript = transcribe_audio_file(file_path)
-        write_log("Whisper Transcript", transcript)
-        print(f"[Whisper] Transcript: {transcript}")
 
         if not transcript:
-            raise HTTPException(
-                status_code=400,
-                detail="Không nhận diện được giọng nói từ file audio.",
-            )
+            return {"error": "Không nhận diện được giọng nói từ file audio."}
 
-        print("[DEBUG] Bước 3: Đang đưa transcript vào Agent")
-        # 3. Đưa transcript vào Agent
-        agent_reply = run_agent(transcript, session_id)
-        
-        print("[DEBUG] Bước 4: Gọi Booking API")
-        # 4. Gọi Booking API nếu có đủ thông tin (JSON)
-        booking_res = await call_booking_api(agent_reply)
-        
-        print(f"[DEBUG] Kết quả Booking API: {booking_res}")
-        if booking_res:
-            return booking_res
-            
-        print("[DEBUG] Trả về AgentResponse (chưa có intent)")
-        return AgentResponse(
-            transcript=transcript,
-            agent_reply=agent_reply,
-            session_id=session_id,
-            booking_status=None
-        )
+        # 3. Gửi transcript vào Agent
+        agent_reply_str = run_agent(transcript, session_id)
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print(f"[ERROR] Lỗi 500 tại voice_agent: {e}")
-        raise HTTPException(status_code=500, detail=f"Lỗi hệ thống: {str(e)}")
+        # 4. Parse agent output
+        import json
+        try:
+            agent_json = json.loads(agent_reply_str)
+        except:
+            agent_json = {}
+
+        # 5. Trả về frontend trực tiếp (for debug and display)
+        return {
+            "transcript": transcript,
+            "from": agent_json.get("pickup_text", ""),
+            "to": agent_json.get("destination_text", ""),
+            "vehicle_type": agent_json.get("vehicle_type", "")
+        }
+
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
-
-
 @app.post(
     "/text-agent",
     summary="Text → Agent",

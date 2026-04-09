@@ -1,164 +1,114 @@
-import React, { useState, useEffect } from "react";
-import { StyleSheet, SafeAreaView, View, Button, Text, ScrollView, ActivityIndicator, TextInput, Alert } from "react-native";
+import React, { useState, useRef } from "react";
+import { View, Text, Button, TextInput, StyleSheet, Alert, Platform } from "react-native";
 import { Audio } from "expo-av";
 
 export default function App() {
   const [recording, setRecording] = useState(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const [chatHistory, setChatHistory] = useState([]); // array of {type:'user'|'sm', text:string}
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [whisperText, setWhisperText] = useState(""); // intermediate text
-  const [userConfirmed, setUserConfirmed] = useState(""); // text confirmed to send to agent
-
-  const WHISPER_URL = "http://localhost:3002/transcribe";
-  const AGENT_URL = "http://localhost:3003/text-agent?session_id=default";
-
-  useEffect(() => {
-    (async () => {
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert("Microphone permission required", "This app needs access to your mic.");
-      }
-    })();
-  }, []);
+  const [transcript, setTranscript] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [vehicle, setVehicle] = useState("");
+  const recordingRef = useRef(null);
 
   const startRecording = async () => {
-    setIsRecording(true);
-    const { recording } = await Audio.Recording.createAsync(Audio.RECORDING_OPTIONS_PRESET_HIGH_QUALITY);
-    setRecording(recording);
-    setWhisperText("");
+    try {
+      const { status } = await Audio.requestPermissionsAsync(); 
+      if (status !== "granted") {
+        Alert.alert("Permission required", "Microphone permission is needed to record audio.");
+        return;
+      }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      const rec = new Audio.Recording();
+      await rec.prepareToRecordAsync(Audio.RECORDING_OPTIONS_PRESET_HIGH_QUALITY);
+      await rec.startAsync();
+
+      setRecording(rec);
+      recordingRef.current = rec;
+    } catch (err) {
+      console.error("Failed to start recording", err);
+      Alert.alert("Error", "Could not start recording.");
+    }
   };
 
   const stopRecording = async () => {
-    if (!recording) return;
-
-    setIsRecording(false);
-    setIsProcessing(true);
-
     try {
-      // Stop recording
-      await recording.stopAndUnloadAsync();
-      const blobUri = recording.getURI();
+      const rec = recordingRef.current;
+      if (!rec) return;
 
-      // Convert URI to blob
-      const blobResponse = await fetch(blobUri);
-      const blob = await blobResponse.blob();
+      await rec.stopAndUnloadAsync();
+      const uri = rec.getURI();
+      setRecording(null);
 
       const formData = new FormData();
-      formData.append("file", new File([blob], "recording.m4a", { type: blob.type }));
-
-      // Send to voice-agent
-      const res = await fetch("http://localhost:3003/voice-agent?session_id=default", {
-        method: "POST",
-        body: formData,
+      formData.append("file", {
+        uri,
+        name: "recording.m4a",
+        type: "audio/m4a",
       });
-      const data = await res.json();
 
-      // Display Whisper transcript first
-      const whisperText = data.transcript || "(Không nhận diện được giọng nói)";
-      setChatHistory(prev => [...prev, { type: "whisper", text: whisperText }]);
+      const response = await fetch(
+        "http://172.16.29.75:3003/voice-agent?session_id=default",
+        {
+          method: "POST",
+          body: formData,
+          // Remove this header:
+          // headers: { "Content-Type": "multipart/form-data" },
+        }
+      );
 
-      // Display Agent response next
-      const agentReply = data.agent_reply || "(Agent chưa trả lời)";
-      setChatHistory(prev => [...prev, { type: "sm", text: agentReply }]);
+    const data = await response.json();
+    console.log("Agent response:", data);
 
-      // Optional: log booking info for debug
-      if (data.booking_status) {
-        console.log("Booking API result:", data.booking_status);
-      }
-
-    } catch (err) {
-      console.log("Error processing audio:", err);
-      setChatHistory(prev => [
-        ...prev,
-        { type: "sm", text: "(Lỗi nhận diện audio hoặc agent)" },
-      ]);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const sendToAgent = async () => {
-    if (!userConfirmed) return;
-
-    setChatHistory(prev => [...prev, { type: "user", text: userConfirmed }]);
-    setUserConfirmed(""); // reset input
-
-    setIsProcessing(true);
-    try {
-      const res = await fetch(AGENT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: userConfirmed }),
-      });
-      const data = await res.json();
-      const agentReply = data.message || "(Agent không trả lời)";
-      setChatHistory(prev => [...prev, { type: "sm", text: agentReply }]);
-    } catch (err) {
-      console.log("Agent error:", err);
-      setChatHistory(prev => [...prev, { type: "sm", text: "(Lỗi kết nối Agent)" }]);
-    } finally {
-      setIsProcessing(false);
-      setWhisperText(""); // clear after sending
-    }
-  };
+    setTranscript(data.transcript || "");
+    setFrom(data.from || "");
+    setTo(data.to || "");
+    setVehicle(data.vehicle_type || "");
+  } catch (err) {
+    console.error("Stop recording error", err);
+    Alert.alert("Error", "Failed to process audio.");
+  }
+};
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.inner}>
-        <Text style={styles.title}>Xanh SM Buddy Chat</Text>
+    <View style={styles.container}>
+      <Text style={styles.label}>Voice Agent Debug</Text>
 
-        <View style={{ flexDirection: "row", marginBottom: 10 }}>
-          <Button title={isRecording ? "Recording..." : "Start Recording"} onPress={startRecording} disabled={isRecording} />
-          <View style={{ width: 10 }} />
-          <Button title="Stop Recording" onPress={stopRecording} disabled={!isRecording} />
-        </View>
+      <Button
+        title={recording ? "Recording..." : "Start Recording"}
+        onPress={startRecording}
+        disabled={!!recording}
+      />
+      <Button
+        title="Stop Recording"
+        onPress={stopRecording}
+        disabled={!recording}
+      />
 
-        {isProcessing && <ActivityIndicator style={{ marginBottom: 10 }} />}
+      <View style={styles.result}>
+        <Text style={styles.label}>Transcript:</Text>
+        <TextInput style={styles.input} value={transcript} editable={false} />
 
-        {whisperText ? (
-          <View style={{ marginVertical: 10 }}>
-            <Text>Whisper heard:</Text>
-            <TextInput
-              style={styles.textInput}
-              value={userConfirmed}
-              onChangeText={setUserConfirmed}
-              placeholder="Edit before sending..."
-            />
-            <Button title="Send to SM Buddy" onPress={sendToAgent} disabled={!userConfirmed} />
-          </View>
-        ) : null}
+        <Text style={styles.label}>From:</Text>
+        <TextInput style={styles.input} value={from} onChangeText={setFrom} />
 
-        <View style={styles.chatContainer}>
-          {chatHistory.map((msg, idx) => (
-            <View
-              key={idx}
-              style={[
-                styles.chatBubble,
-                msg.type === "user"
-                  ? styles.userBubble
-                  : msg.type === "whisper"
-                  ? styles.whisperBubble
-                  : styles.smBubble,
-              ]}
-            >
-              <Text style={styles.chatText}>{msg.text}</Text>
-            </View>
-          ))}
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+        <Text style={styles.label}>To:</Text>
+        <TextInput style={styles.input} value={to} onChangeText={setTo} />
+
+        <Text style={styles.label}>Vehicle Type:</Text>
+        <TextInput style={styles.input} value={vehicle} onChangeText={setVehicle} />
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f5f5f5" },
-  inner: { padding: 20, flexGrow: 1 },
-  title: { fontSize: 24, fontWeight: "bold", marginBottom: 20, textAlign: "center" },
-  chatContainer: { flex: 1, marginTop: 10 },
-  chatBubble: { padding: 10, marginBottom: 8, borderRadius: 8, maxWidth: "80%" },
-  userBubble: { backgroundColor: "#cce5ff", alignSelf: "flex-end" },
-  whisperBubble: { backgroundColor: "#99ddff", alignSelf: "flex-end" },
-  smBubble: { backgroundColor: "#e2e2e2", alignSelf: "flex-start" },
-  chatText: { fontSize: 16, color: "#222" },
+  container: { flex: 1, padding: 20, justifyContent: "flex-start" },
+  label: { fontWeight: "bold", marginTop: 10 },
+  input: { borderWidth: 1, borderColor: "#ccc", padding: 8, marginTop: 5, borderRadius: 5 },
+  result: { marginTop: 20 },
 });
