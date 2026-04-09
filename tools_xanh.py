@@ -45,6 +45,9 @@ def search_location(query: str, user_id: str):
 
     clean_query = query.lower().strip()
 
+    # Thêm dòng này: Quy đổi alias
+    alias_map = {"nhà": "home", "công ty": "company"}
+    clean_query = alias_map.get(clean_query, clean_query)
     # =========================
     # 1. ✅ CHECK SAVED LOCATIONS FIRST (QUAN TRỌNG NHẤT)
     # =========================
