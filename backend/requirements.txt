@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+python-multipart
+requests
+openai-whisper
+
+langchain 
+langchain-openai 
+langgraph 
+python-dotenv
+langchain-google-genai
+google-genai
