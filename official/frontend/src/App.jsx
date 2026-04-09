@@ -8,22 +8,30 @@ export default function App() {
   const [sessionId, setSessionId] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+
   const [transcript, setTranscript] = useState("");
   const [correctedText, setCorrectedText] = useState("");
   const [startPoint, setStartPoint] = useState("");
   const [endPoint, setEndPoint] = useState("");
-  const [vehicleType, setVehicleType] = useState("");
+  const [vehicleType, setVehicleType] = useState(""); // "motorbike" or "car"
+
   const [needsClarification, setNeedsClarification] = useState(false);
   const [questions, setQuestions] = useState([]);
   const [clarifyInput, setClarifyInput] = useState("");
   const [confirmation, setConfirmation] = useState("pending");
   const [error, setError] = useState("");
 
+  // Edit states
+  const [editingField, setEditingField] = useState(null); // "start", "end", or "vehicle"
+  const [tempStart, setTempStart] = useState("");
+  const [tempEnd, setTempEnd] = useState("");
+  const [tempVehicle, setTempVehicle] = useState("");
+
   function ensureSessionId() {
     if (sessionId) return sessionId;
-    const newSessionId = crypto.randomUUID();
-    setSessionId(newSessionId);
-    return newSessionId;
+    const newId = crypto.randomUUID();
+    setSessionId(newId);
+    return newId;
   }
 
   async function startRecording() {
@@ -37,6 +45,7 @@ export default function App() {
     setQuestions([]);
     setClarifyInput("");
     setConfirmation("pending");
+    setEditingField(null);
 
     const newSessionId = ensureSessionId();
 
@@ -44,13 +53,11 @@ export default function App() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      const mediaRecorder = new MediaRecorder(stream);
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
       chunksRef.current = [];
 
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          chunksRef.current.push(event.data);
-        }
+        if (event.data.size > 0) chunksRef.current.push(event.data);
       };
 
       mediaRecorder.onstop = async () => {
@@ -62,123 +69,155 @@ export default function App() {
       mediaRecorderRef.current = mediaRecorder;
       setIsRecording(true);
     } catch (err) {
-      setError("Microphone access denied or unavailable.");
+      setError("Cannot access microphone. Please allow permission.");
     }
   }
 
   function stopRecording() {
-    setError("");
-    const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
-      recorder.stop();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
     }
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current.getTracks().forEach((track) => track.stop());
     }
     setIsRecording(false);
   }
 
   async function handleTranscribeAndParse(audioBlob, activeSessionId) {
     setIsTranscribing(true);
+    setError("");
     try {
       const formData = new FormData();
       formData.append("audio", audioBlob, "recording.webm");
 
-      const transcribeRes = await fetch("/transcribe", {
-        method: "POST",
-        body: formData,
-      });
+      const res = await fetch("/transcribe", { method: "POST", body: formData });
+      if (!res.ok) throw new Error("Transcription failed");
 
-      if (!transcribeRes.ok) {
-        throw new Error("Transcription failed.");
-      }
+      const data = await res.json();
+      setTranscript(data.text || "");
 
-      const transcribeData = await transcribeRes.json();
-      const text = transcribeData.text || "";
-      setTranscript(text);
-
-      await sendParse(text, activeSessionId);
+      await sendParse(data.text || "", activeSessionId);
     } catch (err) {
-      setError(err.message || "Something went wrong.");
+      setError(err.message || "Processing failed.");
     } finally {
       setIsTranscribing(false);
     }
   }
 
   async function sendParse(text, activeSessionId) {
-    const parseRes = await fetch("/parse", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, session_id: activeSessionId }),
-    });
+    try {
+      const res = await fetch("/parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, session_id: activeSessionId }),
+      });
 
-    if (!parseRes.ok) {
-      throw new Error("Parsing failed.");
+      if (!res.ok) throw new Error("Parse failed");
+
+      const data = await res.json();
+
+      setCorrectedText(data.corrected_text || "");
+      setStartPoint(data.start_point || "");
+      setEndPoint(data.end_point || "");
+      setVehicleType(data.vehicle_type || "");
+      setNeedsClarification(Boolean(data.needs_clarification));
+      setQuestions(data.questions || []);
+    } catch (err) {
+      console.error(err);
+      setError("Failed to update information.");
     }
-
-    const parseData = await parseRes.json();
-    setCorrectedText(parseData.corrected_text || "");
-    setStartPoint(parseData.start_point || "");
-    setEndPoint(parseData.end_point || "");
-    setVehicleType(parseData.vehicle_type || "");
-    setNeedsClarification(Boolean(parseData.needs_clarification));
-    setQuestions(parseData.questions || []);
   }
 
-  async function handleClarifySubmit(event) {
-    event.preventDefault();
-    if (!clarifyInput.trim()) return;
+  // ====================== EDIT HANDLERS ======================
+
+  const startEdit = (field) => {
+    if (field === "start") setTempStart(startPoint);
+    if (field === "end") setTempEnd(endPoint);
+    if (field === "vehicle") setTempVehicle(vehicleType);
+    setEditingField(field);
+  };
+
+  const cancelEdit = () => {
+    setEditingField(null);
+  };
+
+  async function saveEdit() {
+    if (!sessionId) return;
+
     setIsTranscribing(true);
-    setError("");
+    let correctionText = "";
+
     try {
-      const activeSessionId = ensureSessionId();
-      await sendParse(clarifyInput.trim(), activeSessionId);
+      if (editingField === "start" && tempStart.trim()) {
+        correctionText = `Sửa điểm đón thành: ${tempStart.trim()}`;
+      } else if (editingField === "end" && tempEnd.trim()) {
+        correctionText = `Sửa điểm đến thành: ${tempEnd.trim()}`;
+      } else if (editingField === "vehicle" && tempVehicle) {
+        const vietName = tempVehicle === "car" ? "ô tô" : "xe máy";
+        correctionText = `Đổi loại xe thành ${vietName}`;
+      }
+
+      if (correctionText) {
+        await sendParse(correctionText, sessionId);
+      }
+
+      setEditingField(null);
+    } catch (err) {
+      setError("Failed to save changes.");
+    } finally {
+      setIsTranscribing(false);
+    }
+  }
+
+  async function handleClarifySubmit(e) {
+    e.preventDefault();
+    if (!clarifyInput.trim()) return;
+
+    setIsTranscribing(true);
+    try {
+      await sendParse(clarifyInput.trim(), ensureSessionId());
       setClarifyInput("");
     } catch (err) {
-      setError(err.message || "Something went wrong.");
+      setError("Failed to process clarification.");
     } finally {
       setIsTranscribing(false);
     }
   }
 
   function handleConfirm() {
+    if (!endPoint) {
+      alert("Vui lòng nhập điểm đến trước khi xác nhận.");
+      return;
+    }
     setConfirmation("confirmed");
+    alert("✅ Đặt xe thành công! (Demo)");
   }
 
   function handleReject() {
     setConfirmation("rejected");
+    alert("Đã hủy đặt xe.");
   }
 
   return (
     <div className="app">
       <div className="card">
-        <h1>Voice Ride Booking</h1>
-        <p className="subtitle">
-          Record your request and we will extract the start, end, and vehicle.
-        </p>
+        <h1>🛵 XanhSM Voice Booking</h1>
+        <p className="subtitle">Nói tự nhiên hoặc chỉnh sửa thông tin bên dưới</p>
 
         <div className="controls">
-          <button
-            className="btn primary"
-            onClick={startRecording}
-            disabled={isRecording || isTranscribing}
-          >
-            Start Recording
+          <button className="btn primary" onClick={startRecording} disabled={isRecording || isTranscribing}>
+            🎤 Bắt đầu ghi âm
           </button>
-          <button
-            className="btn"
-            onClick={stopRecording}
-            disabled={!isRecording}
-          >
-            Stop Recording
+          <button className="btn" onClick={stopRecording} disabled={!isRecording}>
+            ⏹ Dừng ghi âm
           </button>
         </div>
 
-        {isTranscribing && <div className="status">Processing...</div>}
+        {isTranscribing && <div className="status">Đang xử lý...</div>}
         {error && <div className="error">{error}</div>}
 
         <div className="transcript">
-          <div className="label">Transcript</div>
+          <div className="label">Transcript (Nguyên bản)</div>
           <div className="value">{transcript || "—"}</div>
         </div>
 
@@ -188,63 +227,107 @@ export default function App() {
         </div>
 
         <div className="grid">
+          {/* ==================== START POINT ==================== */}
           <div className="box">
-            <div className="label">Start</div>
-            <div className="value">{startPoint || "—"}</div>
+            <div className="label">Điểm đón (Start)</div>
+            {editingField === "start" ? (
+              <div className="edit-mode">
+                <input
+                  type="text"
+                  value={tempStart}
+                  onChange={(e) => setTempStart(e.target.value)}
+                  className="edit-input"
+                  placeholder="Nhập điểm đón..."
+                  autoFocus
+                />
+                <div className="edit-buttons">
+                  <button className="btn small primary" onClick={saveEdit}>Lưu</button>
+                  <button className="btn small" onClick={cancelEdit}>Hủy</button>
+                </div>
+              </div>
+            ) : (
+              <div className="display-mode">
+                <div className="value">{startPoint || "—"}</div>
+                <button className="edit-btn" onClick={() => startEdit("start")}>✏️ Sửa</button>
+              </div>
+            )}
           </div>
+
+          {/* ==================== END POINT ==================== */}
           <div className="box">
-            <div className="label">End</div>
-            <div className="value">{endPoint || "—"}</div>
+            <div className="label">Điểm đến (End)</div>
+            {editingField === "end" ? (
+              <div className="edit-mode">
+                <input
+                  type="text"
+                  value={tempEnd}
+                  onChange={(e) => setTempEnd(e.target.value)}
+                  className="edit-input"
+                  placeholder="Nhập điểm đến..."
+                  autoFocus
+                />
+                <div className="edit-buttons">
+                  <button className="btn small primary" onClick={saveEdit}>Lưu</button>
+                  <button className="btn small" onClick={cancelEdit}>Hủy</button>
+                </div>
+              </div>
+            ) : (
+              <div className="display-mode">
+                <div className="value">{endPoint || "—"}</div>
+                <button className="edit-btn" onClick={() => startEdit("end")}>✏️ Sửa</button>
+              </div>
+            )}
           </div>
+
+          {/* ==================== VEHICLE TYPE ==================== */}
           <div className="box">
-            <div className="label">Vehicle</div>
-            <div className="vehicle">
-              {vehicleType === "car" && (
-                <>
-                  <svg viewBox="0 0 64 32" className="vehicle-icon" aria-hidden="true">
-                    <rect x="6" y="10" width="52" height="12" rx="4" />
-                    <rect x="16" y="4" width="20" height="8" rx="2" />
-                    <circle cx="18" cy="26" r="4" />
-                    <circle cx="46" cy="26" r="4" />
-                  </svg>
-                  <span>Car</span>
-                </>
-              )}
-              {vehicleType === "motorbike" && (
-                <>
-                  <svg viewBox="0 0 64 32" className="vehicle-icon" aria-hidden="true">
-                    <circle cx="16" cy="24" r="6" />
-                    <circle cx="48" cy="24" r="6" />
-                    <path d="M16 24 L26 18 L36 18 L44 24" fill="none" stroke="currentColor" strokeWidth="3" />
-                    <path d="M30 10 L36 18" fill="none" stroke="currentColor" strokeWidth="3" />
-                  </svg>
-                  <span>Motorbike</span>
-                </>
-              )}
-              {!vehicleType && <span>—</span>}
-            </div>
+            <div className="label">Loại xe</div>
+            {editingField === "vehicle" ? (
+              <div className="edit-mode vehicle-edit">
+                <button
+                  className={`vehicle-option ${tempVehicle === "motorbike" ? "selected" : ""}`}
+                  onClick={() => setTempVehicle("motorbike")}
+                >
+                  🏍️ Xe máy
+                </button>
+                <button
+                  className={`vehicle-option ${tempVehicle === "car" ? "selected" : ""}`}
+                  onClick={() => setTempVehicle("car")}
+                >
+                  🚗 Ô tô
+                </button>
+                <div className="edit-buttons">
+                  <button className="btn small primary" onClick={saveEdit}>Lưu</button>
+                  <button className="btn small" onClick={cancelEdit}>Hủy</button>
+                </div>
+              </div>
+            ) : (
+              <div className="display-mode">
+                <div className="vehicle">
+                  {vehicleType === "car" && <span>🚗 Ô tô</span>}
+                  {vehicleType === "motorbike" && <span>🏍️ Xe máy</span>}
+                  {!vehicleType && <span>—</span>}
+                </div>
+                <button className="edit-btn" onClick={() => startEdit("vehicle")}>✏️ Chọn</button>
+              </div>
+            )}
           </div>
         </div>
 
         {needsClarification && questions.length > 0 && (
           <div className="clarify">
-            <div className="label">Need Clarification</div>
+            <div className="label">Cần làm rõ thêm</div>
             <ul>
-              {questions.map((q, idx) => (
-                <li key={idx}>{q}</li>
-              ))}
+              {questions.map((q, i) => <li key={i}>{q}</li>)}
             </ul>
-            <form className="clarify-form" onSubmit={handleClarifySubmit}>
+            <form onSubmit={handleClarifySubmit}>
               <input
-                className="clarify-input"
                 type="text"
-                placeholder="Nhập câu trả lời của bạn..."
+                placeholder="Trả lời ở đây..."
                 value={clarifyInput}
                 onChange={(e) => setClarifyInput(e.target.value)}
               />
-              <button className="btn primary" type="submit" disabled={isTranscribing}>
-                Send
-              </button>
+              <button type="submit" disabled={isTranscribing}>Gửi</button>
             </form>
           </div>
         )}
@@ -253,19 +336,20 @@ export default function App() {
           <button
             className="btn primary"
             onClick={handleConfirm}
-            disabled={isTranscribing}
+            disabled={isTranscribing || !endPoint}
           >
-            Confirm
+            Xác nhận đặt xe
           </button>
           <button className="btn" onClick={handleReject} disabled={isTranscribing}>
-            Reject
+            Hủy
           </button>
-          {confirmation !== "pending" && (
-            <div className="confirm-state">
-              {confirmation === "confirmed" ? "Confirmed" : "Rejected"}
-            </div>
-          )}
         </div>
+
+        {confirmation !== "pending" && (
+          <div className={`confirm-state ${confirmation}`}>
+            {confirmation === "confirmed" ? "✅ Đã xác nhận đặt xe" : "❌ Đã hủy"}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -201,3 +201,67 @@ h1 {
     font-size: 24px;
   }
 }
+
+.edit-mode {
+  margin-top: 8px;
+}
+
+.edit-input {
+  width: 100%;
+  padding: 10px;
+  font-size: 16px;
+  border: 2px solid #007bff;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.vehicle-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vehicle-option {
+  padding: 12px;
+  font-size: 16px;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.vehicle-option.selected {
+  border-color: #007bff;
+  background: #f0f8ff;
+  font-weight: bold;
+}
+
+.edit-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.small {
+  padding: 6px 12px;
+  font-size: 14px;
+}
+
+.display-mode {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.edit-btn {
+  background: none;
+  border: none;
+  color: #007bff;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.edit-btn:hover {
+  text-decoration: underline;
+}
