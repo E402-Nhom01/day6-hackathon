@@ -7,4 +7,6 @@ __pycache__/
 *.pyo
 *.pyd
 .Python 
+*.mp3
+*.m4a
 venv310
