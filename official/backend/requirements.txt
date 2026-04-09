@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+httpx
+numpy
+soundfile
+torch
+openai-whisper
+python-dotenv
+pydantic
+pydantic-settings
+python-multipart
+geopy
+requests
+openrouter
