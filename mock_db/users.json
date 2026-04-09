@@ -1,0 +1,19 @@
+{
+  "bro_01": {
+    "name": "PA",
+    "saved_locations": [
+      {
+        "label": "Nhà",
+        "address": "Sapphire S1.11, Hải Đăng 1, Sapphire 1 Vinhomes Ocean Park, Xã Gia Lâm, Thành phố Hà Nội, 17710, Việt Nam",
+        "lat": 20.9961015,
+        "lng": 105.944009
+      },
+      {
+        "label": "công ty",
+        "address": "VinUni, Gia Lâm, Hà Nội",
+        "lat": 20.985,
+        "lng": 105.945
+      }
+    ]
+  }
+}
