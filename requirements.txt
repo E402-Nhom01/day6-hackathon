@@ -1,0 +1,11 @@
+google-genai
+python-dotenv
+sounddevice
+numpy
+keyboard
+soundfile
+openai-whisper
+whisper
+fastapi
+uvicorn
+python-multipart
