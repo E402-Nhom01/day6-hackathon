@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice To Text Tester</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --container-bg: rgba(30, 41, 59, 0.7);
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --danger: #ef4444;
+            --danger-pulse: rgba(239, 68, 68, 0.4);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --border: rgba(255, 255, 255, 0.1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(16, 185, 129, 0.15) 0px, transparent 50%);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        .container {
+            background: var(--container-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 3rem;
+            width: 100%;
+            max-width: 600px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, #60a5fa, #34d399);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        p.subtitle {
+            color: var(--text-muted);
+            margin-bottom: 2.5rem;
+            font-size: 1rem;
+        }
+
+        .record-btn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            padding: 1rem 2.5rem;
+            font-size: 1.125rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.3);
+        }
+
+        .record-btn:hover {
+            transform: translateY(-2px);
+            background: var(--primary-hover);
+        }
+
+        .record-btn.recording {
+            background: var(--danger);
+            animation: pulse-danger 1.5s infinite;
+            box-shadow: 0 0 0 0 var(--danger-pulse);
+        }
+
+        @keyframes pulse-danger {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 var(--danger-pulse); }
+            70% { transform: scale(1.05); box-shadow: 0 0 0 15px transparent; }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 transparent; }
+        }
+
+        .status {
+            margin-top: 1.5rem;
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            min-height: 24px;
+        }
+
+        .result-box {
+            margin-top: 2rem;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 1.5rem;
+            text-align: left;
+            min-height: 120px;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: all 0.4s ease;
+        }
+
+        .result-box.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .result-label {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin-bottom: 0.75rem;
+            font-weight: 600;
+        }
+
+        .result-text {
+            font-size: 1.1rem;
+            line-height: 1.6;
+            color: var(--text-main);
+            word-wrap: break-word;
+        }
+
+        .dot-pulse {
+            display: inline-flex;
+            gap: 4px;
+            align-items: center;
+        }
+        
+        .dot {
+            width: 6px;
+            height: 6px;
+            background: white;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+
+        .dot:nth-child(1) { animation-delay: -0.32s; }
+        .dot:nth-child(2) { animation-delay: -0.16s; }
+        
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+
+        /* SVG Icons */
+        .icon-mic { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+        .icon-stop { width: 24px; height: 24px; fill: currentColor; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>VTT Tester</h1>
+        <p class="subtitle">Kiểm thử độ chính xác của Whisper Large-v3</p>
+
+        <button id="recordBtn" class="record-btn">
+            <svg class="icon-mic" id="btnIcon" viewBox="0 0 24 24">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                <line x1="12" y1="19" x2="12" y2="23"></line>
+                <line x1="8" y1="23" x2="16" y2="23"></line>
+            </svg>
+            <span id="btnText">Start Recording</span>
+        </button>
+
+        <div class="status" id="statusText">Sẵn sàng thu âm</div>
+
+        <div class="result-box" id="resultBox">
+            <div class="result-label">Kết quả Extract:</div>
+            <div class="result-text" id="resultText"></div>
+        </div>
+    </div>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+
+        const recordBtn = document.getElementById('recordBtn');
+        const btnText = document.getElementById('btnText');
+        const btnIcon = document.getElementById('btnIcon');
+        const statusText = document.getElementById('statusText');
+        const resultBox = document.getElementById('resultBox');
+        const resultText = document.getElementById('resultText');
+
+        const micIconSVG = `<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line>`;
+        const stopIconSVG = `<rect x="6" y="6" width="12" height="12"></rect>`; // stop icon (square) element needs different styling, so we simplify
+
+        recordBtn.addEventListener('click', async () => {
+            if (!isRecording) {
+                // START RECORDING
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+                    
+                    mediaRecorder.ondataavailable = (e) => {
+                        if (e.data.size > 0) audioChunks.push(e.data);
+                    };
+
+                    mediaRecorder.onstop = async () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        audioChunks = [];
+                        await sendAudioToServer(audioBlob);
+                    };
+
+                    mediaRecorder.start();
+                    isRecording = true;
+                    
+                    // Update UI
+                    recordBtn.classList.add('recording');
+                    btnText.innerText = "End Record";
+                    btnIcon.innerHTML = stopIconSVG;
+                    statusText.innerHTML = "Đang thu âm... Hãy nói gì đó!";
+                    resultBox.classList.remove('visible');
+
+                } catch (err) {
+                    alert("Không thể truy cập Microphone: " + err.message);
+                }
+            } else {
+                // STOP RECORDING
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop()); // release mic
+                isRecording = false;
+                
+                // Update UI
+                recordBtn.classList.remove('recording');
+                btnText.innerText = "Start Recording";
+                btnIcon.innerHTML = micIconSVG;
+                statusText.innerHTML = `
+                    Đang xử lý âm thanh 
+                    <div class="dot-pulse"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+                `;
+            }
+        });
+
+        async function sendAudioToServer(blob) {
+            const formData = new FormData();
+            formData.append("file", blob, "recording.webm");
+
+            try {
+                const response = await fetch("http://127.0.0.1:4000/test-transcribe", {
+                    method: "POST",
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    statusText.innerHTML = "Nhận diện hoàn tất!";
+                    resultText.innerText = data.text;
+                    resultBox.classList.add('visible');
+                } else {
+                    statusText.innerHTML = `<span style="color:var(--danger)">Lỗi: ${data.error}</span>`;
+                }
+
+            } catch (error) {
+                statusText.innerHTML = `<span style="color:var(--danger)">Lỗi kết nối Server: ${error.message}</span>`;
+            }
+        }
+    </script>
+</body>
+</html>
