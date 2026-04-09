@@ -49,7 +49,7 @@ def write_log(role: str, content: str):
 # ==========================================
 
 # 1. Đọc System Prompt
-with open("system_prompt.txt", "r", encoding="utf-8") as f:
+with open(r"backend\system_prompt.txt", "r", encoding="utf-8") as f:
     SYSTEM_PROMPT = f.read()
 
 # 2. Khai báo State
