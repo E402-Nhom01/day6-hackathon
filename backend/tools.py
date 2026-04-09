@@ -63,3 +63,31 @@ def search_ride_locations(origin: str, destination: str) -> str:
         f"- Lat: {dest_data['lat']} | Lng: {dest_data['lng']}"
     )
     return result
+
+@tool
+def send_booking_intent(pickup_text: str, destination_text: str, vehicle_type: str = "bike", user_id: str = "bro_01") -> str:
+    """
+    Gửi ý định đặt xe của người dùng tới hệ thống xử lý booking.
+    Tham số:
+    - pickup_text: Điểm đón khách nói (VD: 'Home', 'Landmark 81')
+    - destination_text: Điểm đến khách nói (VD: 'VinUni', 'Sân bay')
+    - vehicle_type: Loại xe khách chọn ('bike' hoặc 'car')
+    - user_id: ID người dùng (mặc định 'bro_01')
+    """
+    import requests
+    url = "http://127.0.0.1:8000/api/v1/booking/intent"
+    payload = {
+        "user_id": user_id,
+        "pickup_text": pickup_text,
+        "destination_text": destination_text,
+        "vehicle_type": vehicle_type,
+        "current_gps": {}
+    }
+    try:
+        response = requests.post(url, json=payload, timeout=5)
+        if response.status_code == 200:
+            return f"Thành công: Đã gửi intent tới hệ thống booking. Phản hồi: {response.text}"
+        else:
+            return f"Lỗi: Hệ thống booking trả về mã lỗi {response.status_code} - {response.text}"
+    except Exception as e:
+        return f"Lỗi khi kết nối tới hệ thống booking: {str(e)}"

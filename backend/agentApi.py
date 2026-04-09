@@ -6,6 +6,8 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import json
+import httpx
 from typing import Optional
 
 # Import agent graph, logic, và history từ agent.py
@@ -59,6 +61,44 @@ class AgentResponse(BaseModel):
     transcript: Optional[str] = None
     agent_reply: str
     session_id: str
+    booking_status: Optional[dict] = None
+
+
+async def call_booking_api(agent_reply_str: str):
+    """
+    Hàm helper để parse agent_reply và gọi đến API booking intent.
+    """
+    try:
+        # 1. Parse JSON từ agent
+        data = json.loads(agent_reply_str)
+        
+        # 2. Chuẩn bị payload cho booking API
+        # Chỉ lấy các field mà main.py yêu cầu
+        payload = {
+            "user_id": data.get("user_id", "bro_01"),
+            "pickup_text": data.get("pickup_text", "Home"),
+            "destination_text": data.get("destination_text"),
+            "vehicle_type": data.get("vehicle_type", "bike"),
+            "current_gps": data.get("current_gps", {})
+        }
+        
+        # 3. Gọi API http://127.0.0.1:8000/api/v1/booking/intent
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "http://127.0.0.1:8000/api/v1/booking/intent",
+                json=payload,
+                timeout=10.0
+            )
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return {"status": "ERROR", "message": f"Booking API error: {response.status_code}"}
+                
+    except json.JSONDecodeError:
+        # Nếu agent chưa trả về JSON (đang hội thoại bình thường) thì bỏ qua
+        return None
+    except Exception as e:
+        return {"status": "ERROR", "message": str(e)}
 
 
 # ========================
@@ -67,7 +107,6 @@ class AgentResponse(BaseModel):
 
 @app.post(
     "/voice-agent",
-    response_model=AgentResponse,
     summary="Voice → Text → Agent",
     description="Nhận file âm thanh, transcribe bằng Whisper, rồi đưa vào Agent xử lý.",
 )
@@ -85,10 +124,12 @@ async def voice_agent(
     file_path = os.path.join(TEMP_DIR, f"{session_id}_{file.filename}")
 
     try:
+        print("[DEBUG] Bước 1: Bắt đầu xử lý file tạm")
         # 1. Lưu file tạm
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
+        print(f"[DEBUG] Bước 2: Bắt đầu Transcribe từ {file_path}")
         # 2. Transcribe audio → text
         transcript = transcribe_audio_file(file_path)
         write_log("Whisper Transcript", transcript)
@@ -100,18 +141,32 @@ async def voice_agent(
                 detail="Không nhận diện được giọng nói từ file audio.",
             )
 
+        print("[DEBUG] Bước 3: Đang đưa transcript vào Agent")
         # 3. Đưa transcript vào Agent
         agent_reply = run_agent(transcript, session_id)
-
+        
+        print("[DEBUG] Bước 4: Gọi Booking API")
+        # 4. Gọi Booking API nếu có đủ thông tin (JSON)
+        booking_res = await call_booking_api(agent_reply)
+        
+        print(f"[DEBUG] Kết quả Booking API: {booking_res}")
+        if booking_res:
+            return booking_res
+            
+        print("[DEBUG] Trả về AgentResponse (chưa có intent)")
         return AgentResponse(
             transcript=transcript,
             agent_reply=agent_reply,
             session_id=session_id,
+            booking_status=None
         )
 
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[ERROR] Lỗi 500 tại voice_agent: {e}")
         raise HTTPException(status_code=500, detail=f"Lỗi hệ thống: {str(e)}")
     finally:
         if os.path.exists(file_path):
@@ -120,17 +175,24 @@ async def voice_agent(
 
 @app.post(
     "/text-agent",
-    response_model=AgentResponse,
     summary="Text → Agent",
     description="Nhận text trực tiếp và đưa vào Agent xử lý.",
 )
 async def text_agent(request: TextRequest):
     try:
         agent_reply = run_agent(request.text, request.session_id)
+        
+        # Gọi Booking API nếu có đủ thông tin (JSON)
+        booking_res = await call_booking_api(agent_reply)
+        
+        if booking_res:
+            return booking_res
+
         return AgentResponse(
             transcript=None,
             agent_reply=agent_reply,
             session_id=request.session_id,
+            booking_status=None
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi hệ thống: {str(e)}")
