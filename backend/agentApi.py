@@ -1,8 +1,6 @@
 import os
 import sys
 import shutil
-import whisper
-import torch
 from datetime import datetime
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
@@ -10,8 +8,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 
-# Import agent graph từ agent.py
-from agent import graph, write_log
+# Import agent graph, logic, và history từ agent.py
+from agent import graph, write_log, run_agent, chat_sessions
+
+import importlib.util
+
+# Load module server.py từ thư mục voice-to-text bằng importlib do thư mục có chứa ký tự '-'
+# Viêc này tránh conflict với backend/server.py
+_voice_server_path = os.path.join(os.path.dirname(__file__), "voice-to-text", "server.py")
+_spec = importlib.util.spec_from_file_location("voice_server", _voice_server_path)
+_voice_server = importlib.util.module_from_spec(_spec)
+# Add to sys.modules for any future resolution within that module (though not strictly necessary here)
+sys.modules["voice_server"] = _voice_server
+_spec.loader.exec_module(_voice_server)
+transcribe_audio_file = _voice_server.transcribe_audio_file
 
 # ========================
 # KHỞI TẠO FASTAPI
@@ -34,24 +44,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ========================
-# LOAD WHISPER MODEL
-# ========================
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-MODEL_SIZE = "large-v3"
-print(f"--- [AgentAPI] Loading Whisper model '{MODEL_SIZE}' on {DEVICE} ---")
-whisper_model = whisper.load_model(MODEL_SIZE, device=DEVICE)
-print("--- [AgentAPI] Whisper model loaded successfully ---")
-
 TEMP_DIR = "temp_audio"
 os.makedirs(TEMP_DIR, exist_ok=True)
-
-# ========================
-# LƯU TRỮ CHAT HISTORY THEO SESSION
-# ========================
-# Dùng dict để quản lý nhiều session đồng thời
-chat_sessions: dict[str, list] = {}
-
 
 # ========================
 # SCHEMA
@@ -65,56 +59,6 @@ class AgentResponse(BaseModel):
     transcript: Optional[str] = None
     agent_reply: str
     session_id: str
-
-
-# ========================
-# HÀM TRANSCRIBE AUDIO (logic từ voice-to-text/server.py)
-# ========================
-def transcribe_audio_file(file_path: str) -> str:
-    """Transcribe file audio bằng Whisper, trả về text."""
-    result = whisper_model.transcribe(
-        file_path,
-        fp16=torch.cuda.is_available(),
-        language="vi",
-    )
-    return result["text"].strip()
-
-
-# ========================
-# HÀM XỬ LÝ AGENT
-# ========================
-def run_agent(user_text: str, session_id: str = "default") -> str:
-    """Đưa text vào LangGraph agent và trả về response."""
-    if session_id not in chat_sessions:
-        chat_sessions[session_id] = []
-
-    chat_history = chat_sessions[session_id]
-    chat_history.append(("human", user_text))
-
-    write_log("User", user_text)
-
-    result = graph.invoke({"messages": chat_history})
-    chat_history = result["messages"]
-    chat_sessions[session_id] = chat_history
-
-    # Trích xuất text từ message cuối cùng
-    final = chat_history[-1]
-    text = ""
-    if isinstance(final.content, list):
-        for item in final.content:
-            if isinstance(item, dict) and "text" in item:
-                text += item["text"] + " "
-            elif isinstance(item, str):
-                text += item + " "
-    else:
-        text = str(final.content)
-
-    text = text.strip()
-    if not text:
-        text = "(Đang tra cứu dữ liệu...)"
-
-    write_log("SM Buddy", text)
-    return text
 
 
 # ========================
