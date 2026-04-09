@@ -6,8 +6,6 @@ Hệ thống AI Voice Assistant giúp người dùng đặt xe XanhSM siêu tố
 
 ## Level: Mock prototype
 
-## Level: Working Prototype
-
 ### 1. Sketch
 
 - **UI/UX Flow:** Phác thảo luồng tương tác: Nhấn giữ Mic -> Nói -> Hiển thị Form điền sẵn -> Xác nhận đặt xe.
@@ -21,7 +19,7 @@ Hệ thống AI Voice Assistant giúp người dùng đặt xe XanhSM siêu tố
 ### 3. Working
 
 - **Frontend (FE):** Ứng dụng Expo chạy trên thiết bị thật, tích hợp **OpenAI Whisper (STT)** để chuyển đổi giọng nói thành văn bản. FE gửi chuỗi văn bản và tọa độ GPS hiện tại lên hệ thống.
-- **AI Agent (The Interpreter)**: Sử dụng các mô hình ngôn ngữ lớn (LLM) như Gemini đóng vai trò là AI Agent, giúp phân tích ngữ cảnh và bóc tách các thực thể (Entities) từ svăn bản/giọng nói. Hệ thống có khả năng nhận diện chính xác các tham số như: Điểm xuất phát (Pickup), Đích đến (Destination), và Loại phương tiện (Vehicle Type). Kết quả được chuẩn hóa thành cấu trúc JSON để Backend thực hiện logic đối soát dữ liệu cá nhân và tính toán lộ trình.
+- **AI Agent (The Interpreter)**: Sử dụng các mô hình ngôn ngữ lớn (LLM) như Gemini đóng vai trò là AI Agent, giúp phân tích ngữ cảnh và bóc tách các thực thể (Entities) từ văn bản/giọng nói. Hệ thống có khả năng nhận diện chính xác các tham số như: Điểm xuất phát (Pickup), Đích đến (Destination), và Loại phương tiện (Vehicle Type). Kết quả được chuẩn hóa thành cấu trúc JSON để Backend thực hiện logic đối soát dữ liệu cá nhân và tính toán lộ trình.
 
 - **Backend (BE - The Orchestrator & Decision Maker):** - Hệ thống **FastAPI** tiếp nhận thực thể từ Agent và thực hiện logic ra quyết định: - Đối soát thực thể với dữ liệu cá nhân trong `users.json` (Saved locations). - Nếu không có trong dữ liệu cá nhân, tự động kích hoạt **Tool Map (Geopy)** để tìm kiếm địa chỉ thực tế.
   - Tính toán quãng đường di chuyển bộ thực tế qua **OSRM API**.
