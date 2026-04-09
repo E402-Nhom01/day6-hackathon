@@ -3,10 +3,12 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict
 
 import httpx
+import numpy as np
 import soundfile as sf
+import torch
 import whisper
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile, HTTPException
@@ -14,12 +16,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 # DeepFilterNet
-from df.enhance import enhance, init_df, load_audio
+try:
+    from df.enhance import enhance, init_df, load_audio
+except ImportError:
+    enhance = init_df = load_audio = None
 
-# ==================== INIT ====================
+# ----------------------
+# Load .env
+# ----------------------
 load_dotenv()
 
-app = FastAPI(title="XanhSM Voice Booking AI")
+# ----------------------
+# FastAPI Setup
+# ----------------------
+app = FastAPI(title="Voice Ride Booking API (Vietnamese)")
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,213 +39,291 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ==================== REQUEST ====================
+
+# ----------------------
+# Models
+# ----------------------
 class ParseRequest(BaseModel):
     text: str
     session_id: str
-    user_lat: Optional[float] = None
-    user_lng: Optional[float] = None
+
 
 SESSION_STORE: Dict[str, dict] = {}
 
-# ==================== MODELS ====================
-print("🔄 Loading DeepFilterNet...")
+# ----------------------
+# Fake User Saved Locations
+# ----------------------
+USER_SAVED_LOCATIONS = {
+    "Nhà": "Nhà riêng - 123 Đường ABC, Quận 1, TP.HCM",
+    "nhà": "Nhà riêng - 123 Đường ABC, Quận 1, TP.HCM",
+    "công ty": "Công ty TechViệt - 456 Tower, Quận 7, TP.HCM",
+    "văn phòng": "Công ty TechViệt - 456 Tower, Quận 7, TP.HCM",
+    "trường": "Đại học Bách Khoa Hà Nội",
+    "đại học": "Đại học Bách Khoa Hà Nội",
+    "win uni": "Win University",
+    "wini uni": "Win University",
+    "vin uni": "Vin University",
+}
+
+# ----------------------
+# DeepFilterNet Setup
+# ----------------------
+print("🔄 Loading DeepFilterNet model...")
 try:
     df_model, df_state, _ = init_df()
     print("✅ DeepFilterNet loaded!")
 except Exception as e:
     print(f"⚠️ DeepFilterNet failed: {e}")
-    df_model = df_state = None
+    df_model = None
+    df_state = None
 
+# ----------------------
+# Whisper
+# ----------------------
 whisper_model = whisper.load_model("base")
 
-# ==================== ENV ====================
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
-# ==================== AUDIO ====================
-def preprocess_audio(audio_bytes: bytes) -> bytes:
-    if not df_model or not df_state:
+def preprocess_audio_with_deepfilter(audio_bytes: bytes) -> bytes:
+    if df_model is None or df_state is None:
         return audio_bytes
-
-    tmp_in = tmp_out = None
+    tmp_in_path = tmp_out_path = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            f.write(audio_bytes)
-            tmp_in = f.name
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_in_path = tmp.name
 
-        audio, sr = load_audio(tmp_in)
+        audio, sr = load_audio(tmp_in_path)
         enhanced = enhance(df_model, df_state, audio)
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            sf.write(f.name, enhanced.cpu().numpy().squeeze(), sr)
-            tmp_out = f.name
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_out:
+            sf.write(tmp_out.name, enhanced.cpu().numpy().squeeze(), sr)
+            tmp_out_path = tmp_out.name
 
-        with open(tmp_out, "rb") as f:
+        with open(tmp_out_path, "rb") as f:
             return f.read()
-
-    except:
+    except Exception as e:
+        print(f"[DEEPFILTER_ERROR] {e}")
         return audio_bytes
     finally:
-        for p in [tmp_in, tmp_out]:
+        for p in [tmp_in_path, tmp_out_path]:
             if p and Path(p).exists():
                 Path(p).unlink(missing_ok=True)
 
 
 def run_whisper(audio_bytes: bytes) -> str:
-    cleaned = preprocess_audio(audio_bytes)
-
+    cleaned = preprocess_audio_with_deepfilter(audio_bytes)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
         tmp.write(cleaned)
         tmp_path = tmp.name
 
     try:
-        result = whisper_model.transcribe(tmp_path, language="vi", fp16=False)
+        result = whisper_model.transcribe(
+            tmp_path, language="vi", fp16=False,
+            initial_prompt="đặt xe, về nhà, về công ty, về trường"
+        )
         return result["text"].strip()
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
-# ==================== TEXT NORMALIZE ====================
-def normalize_text(text: str) -> str:
-    text = text.lower()
 
-    replacements = {
-        "xem máy": "xe máy",
-        "xe may": "xe máy",
-        "vnuni": "vin uni",
-        "vinuni": "vin uni",
-    }
+# ----------------------
+# OpenRouter
+# ----------------------
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-    for k, v in replacements.items():
-        text = text.replace(k, v)
 
-    return text.strip()
-
-# ==================== OPENROUTER ====================
 def call_openrouter(prompt: str) -> str:
     if not OPENROUTER_API_KEY:
-        raise RuntimeError("Missing OPENROUTER_API_KEY")
+        raise RuntimeError("Missing OPENROUTER_API_KEY. Vui lòng thiết lập trong file .env")
 
-    resp = httpx.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        json={
-            "model": "qwen/qwen-2.5-7b-instruct",
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-        },
-        headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
-        timeout=60.0,
-    )
+    models_to_try = [
+        os.getenv("OPENROUTER_MODEL", "google/gemma-7b-it:free"),
+        os.getenv("OPENROUTER_FALLBACK_MODEL", "qwen/qwen-2.5-7b-instruct")
+    ]
 
-    resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    for model_name in models_to_try:
+        try:
+            payload = {
+                "model": model_name,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+                "max_tokens": 300,
+            }
+            headers = {
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "http://localhost:3000",  # Optional for OpenRouter
+                "X-Title": "XanhSM-Buddy"
+            }
+            with httpx.Client(timeout=60) as client:
+                resp = client.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
 
-# ==================== PARSE ====================
-def run_parse(text: str) -> dict:
-    text = normalize_text(text)
+            if resp.status_code == 200:
+                content = resp.json()["choices"][0]["message"]["content"]
+                return content.strip()
+            else:
+                print(f"[OPENROUTER_ERROR] Model {model_name} returned {resp.status_code}: {resp.text}")
+        except Exception as e:
+            print(f"[OPENROUTER_EXCEPTION] Model {model_name} failed: {e}")
+            continue
+
+    return ""
+
+
+def detect_intent(text: str) -> dict:
+    """
+    Simple check to see if the user is talking about ride booking.
+    """
+    ride_keywords = ["đặt xe", "book", "đi", "về", "chở", "xe máy", "ô tô", "taxi", "grab", "xanh sm"]
+    text_lower = text.lower()
+    is_ride = any(kw in text_lower for kw in ride_keywords)
+    return {"is_ride_booking": is_ride}
+
+
+def run_gwen_correct(text: str, context: dict) -> str:
+    prompt = f"""
+Bạn là trợ lý đặt xe.
+
+Sửa lỗi chính tả, làm cho câu tự nhiên và chuẩn hóa địa danh.
+Giữ nguyên ý người dùng nói (đặc biệt là từ "về nhà", "về trường"...).
+
+Câu gốc: {text}
+
+Chỉ trả về một câu hoàn chỉnh.
+"""
+    try:
+        return call_openrouter(prompt) or text
+    except:
+        return text
+
+
+def run_gwen_parse(text: str, context: dict) -> dict:
+    context_hint = ""
+    if any(context.get(k) for k in ["start_point", "end_point", "vehicle_type"]):
+        context_hint = f"""
+Thông tin đã biết từ trước:
+- Điểm đón: {context.get('start_point') or 'chưa biết'}
+- Điểm đến: {context.get('end_point') or 'chưa biết'}
+- Loại xe: {context.get('vehicle_type') or 'chưa biết'}
+"""
 
     prompt = f"""
-Bạn là AI đặt xe.
+Bạn là trợ lý đặt xe.
 
-Câu:
-"{text}"
+{context_hint}
 
-YÊU CẦU:
-- Sửa lỗi chính tả
-- Xác định:
-  start_point, end_point, vehicle_type
+Hiểu rõ câu của người dùng, đặc biệt là trường hợp sửa chữa:
+- "về nhà", "về công ty", "về trường" → end_point = Nhà / công ty / trường, start_point thường là "Hiện tại" hoặc để trống.
+- Từ như "à không", "thay đổi", "sửa lại", "không phải... mà" → ưu tiên thông tin mới nhất.
 
-QUY TẮC:
-- "từ X đến Y" → start = X, end = Y
-- "đến X" → start = "Hiện tại"
-- "xe máy" → motorbike
-- "ô tô" → car
+Trích xuất thành JSON:
 
-Trả JSON:
 {{
-  "corrected_text": "...",
-  "start_point": "...",
-  "end_point": "...",
-  "vehicle_type": "motorbike" hoặc "car"
+  "start_point": "string hoặc null (nếu không rõ thì để null)",
+  "end_point": "string hoặc null",
+  "vehicle_type": "car" hoặc "motorbike" hoặc null
 }}
+
+Câu: {text}
+
+Chỉ trả JSON thuần túy. Không markdown, không giải thích.
 """
 
     try:
         raw = call_openrouter(prompt)
-        match = re.search(r"\{[\s\S]*\}", raw)
-        return json.loads(match.group(0))
-    except:
-        return {
-            "corrected_text": text,
-            "start_point": "Hiện tại",
-            "end_point": None,
-            "vehicle_type": None,
-        }
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not match:
+            raise RuntimeError("No JSON")
 
-# ==================== GOOGLE MAP ====================
-async def resolve_location(name: str, context=None) -> dict:
-    if not name:
-        return {"lat": None, "lng": None}
+        parsed = json.loads(match.group(0))
 
-    # Current location
-    if name.lower() in ["hiện tại", "current location"]:
-        if context and context.get("user_lat"):
-            return {
-                "display_name": "Vị trí hiện tại",
-                "lat": context["user_lat"],
-                "lng": context["user_lng"],
-                "source": "gps",
-            }
+        # Normalize vehicle
+        if parsed.get("vehicle_type"):
+            vt = str(parsed.get("vehicle_type", "")).lower().strip()
+            parsed[
+                "vehicle_type"] = "car" if "car" in vt or "ô tô" in vt else "motorbike" if "moto" in vt or "xe máy" in vt else None
 
-    # Google Places
-    if GOOGLE_MAPS_API_KEY:
-        try:
-            url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
-            params = {
-                "query": name + " Việt Nam",
-                "key": GOOGLE_MAPS_API_KEY,
-            }
+        return parsed
+    except Exception as e:
+        print("[PARSE_ERROR]", e)
+        return {"start_point": None, "end_point": None, "vehicle_type": None}
 
-            async with httpx.AsyncClient() as client:
-                res = await client.get(url, params=params)
-                data = res.json()
 
-            if data.get("results"):
-                r = data["results"][0]
-                loc = r["geometry"]["location"]
+# Merge, Clarification, Resolve... (same as before)
+def merge_state(prev: dict, new: dict) -> dict:
+    result = dict(prev)
+    for k in ["start_point", "end_point", "vehicle_type"]:
+        if new.get(k) is not None:
+            result[k] = new[k]
+    return result
 
-                return {
-                    "display_name": r.get("name"),
-                    "full_address": r.get("formatted_address"),
-                    "lat": loc["lat"],
-                    "lng": loc["lng"],
-                    "source": "google",
-                }
 
-        except Exception as e:
-            print("[Map Error]", e)
+def build_clarification(data: dict) -> dict:
+    missing = []
+    questions = []
 
-    return {"display_name": name, "lat": None, "lng": None}
+    if not data.get("start_point"):
+        missing.append("start_point")
+        questions.append("Bạn muốn được đón ở đâu?")
+    if not data.get("end_point"):
+        missing.append("end_point")
+        questions.append("Bạn muốn đi đến đâu?")
+    if not data.get("vehicle_type"):
+        missing.append("vehicle_type")
+        questions.append("Bạn muốn xe máy hay ô tô?")
 
-# ==================== FLOW ====================
-async def run_flow(text: str, session_id: str, context: dict):
-    parsed = run_parse(text)
+    return {
+        "needs_clarification": len(missing) > 0,
+        "missing_fields": missing,
+        "questions": questions
+    }
 
-    start_resolved = await resolve_location(parsed.get("start_point"), context)
-    end_resolved = await resolve_location(parsed.get("end_point"), context)
+
+def generate_clarification_message(clarification: dict) -> str:
+    if not clarification["needs_clarification"]:
+        return "✅ Đã đủ thông tin để đặt xe!"
+    return "\n".join(clarification["questions"]) if len(clarification["questions"]) > 1 else clarification["questions"][
+        0]
+
+
+def resolve_saved_location(name: str) -> str:
+    return USER_SAVED_LOCATIONS.get(str(name).strip(), name)
+
+
+# ----------------------
+# Main Flow
+# ----------------------
+def run_parse_flow(text: str, session_id: str):
+    prev = SESSION_STORE.get(session_id, {"start_point": None, "end_point": None, "vehicle_type": None})
+
+    intent = detect_intent(text)
+    if not intent.get("is_ride_booking", True):
+        return {"is_off_topic": True, "off_topic_message": "Xin lỗi, tôi chỉ hỗ trợ đặt xe."}
+
+    corrected = run_gwen_correct(text, prev)
+    parsed = run_gwen_parse(corrected, prev)
+
+    merged = merge_state(prev, parsed)
+    clarification = build_clarification(merged)
+
+    SESSION_STORE[session_id] = merged
 
     return {
         "session_id": session_id,
-        "corrected_text": parsed.get("corrected_text"),
-        "start_point": parsed.get("start_point"),
-        "end_point": parsed.get("end_point"),
-        "vehicle_type": parsed.get("vehicle_type"),
-        "resolved_start": start_resolved,
-        "resolved_end": end_resolved,
-        "ready_to_book": end_resolved.get("lat") is not None,
+        "corrected_text": corrected,
+        "start_point": merged.get("start_point"),
+        "end_point": merged.get("end_point"),
+        "vehicle_type": merged.get("vehicle_type"),
+        "resolved_start": resolve_saved_location(merged.get("start_point") or ""),
+        "resolved_end": resolve_saved_location(merged.get("end_point") or ""),
+        "needs_clarification": clarification["needs_clarification"],
+        "clarification_message": generate_clarification_message(clarification),
+        "questions": clarification["questions"]
     }
 
-# ==================== API ====================
+
+# API Endpoints (keep as before)
 @app.post("/transcribe")
 async def transcribe(audio: UploadFile = File(...)):
     audio_bytes = await audio.read()
@@ -244,18 +332,13 @@ async def transcribe(audio: UploadFile = File(...)):
 
 
 @app.post("/parse")
-async def parse(req: ParseRequest):
-    try:
-        context = {
-            "user_lat": req.user_lat,
-            "user_lng": req.user_lng,
-        }
-        return await run_flow(req.text, req.session_id, context)
-    except Exception as e:
-        raise HTTPException(500, str(e))
+async def parse_ride(req: ParseRequest):
+    if not req.session_id:
+        raise HTTPException(400, "Missing session_id")
+    return run_parse_flow(req.text, req.session_id)
 
 
-# ==================== RUN ====================
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
