@@ -1,152 +1,164 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, SafeAreaView, Button, Text, Alert, ActivityIndicator, Platform } from 'react-native';
-import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
+import React, { useState, useEffect } from "react";
+import { StyleSheet, SafeAreaView, View, Button, Text, ScrollView, ActivityIndicator, TextInput, Alert } from "react-native";
+import { Audio } from "expo-av";
 
 export default function App() {
   const [recording, setRecording] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
-  const [localUri, setLocalUri] = useState(null);
-  const [transcript, setTranscript] = useState('');
+  const [chatHistory, setChatHistory] = useState([]); // array of {type:'user'|'sm', text:string}
   const [isProcessing, setIsProcessing] = useState(false);
+  const [whisperText, setWhisperText] = useState(""); // intermediate text
+  const [userConfirmed, setUserConfirmed] = useState(""); // text confirmed to send to agent
 
-  // Whisper server URL
-  const WHISPER_URL = 'http://172.16.29.75:5050/transcribe';
+  const WHISPER_URL = "http://localhost:3002/transcribe";
+  const AGENT_URL = "http://localhost:3003/text-agent?session_id=default";
 
   useEffect(() => {
-    async function requestPermission() {
+    (async () => {
       const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Microphone permission required', 'This app needs access to your microphone to record audio.');
+      if (status !== "granted") {
+        Alert.alert("Microphone permission required", "This app needs access to your mic.");
       }
-    }
-    requestPermission();
+    })();
   }, []);
 
   const startRecording = async () => {
-    try {
-      setIsRecording(true);
-      setTranscript('');
-      setLocalUri(null);
-      const { recording } = await Audio.Recording.createAsync(Audio.RECORDING_OPTIONS_PRESET_HIGH_QUALITY);
-      setRecording(recording);
-    } catch (err) {
-      console.log('Error starting recording', err);
-      setIsRecording(false);
-    }
+    setIsRecording(true);
+    const { recording } = await Audio.Recording.createAsync(Audio.RECORDING_OPTIONS_PRESET_HIGH_QUALITY);
+    setRecording(recording);
+    setWhisperText("");
   };
 
   const stopRecording = async () => {
+    if (!recording) return;
+
+    setIsRecording(false);
+    setIsProcessing(true);
+
     try {
-      setIsRecording(false);
+      // Stop recording
       await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
-      console.log('Recording URI:', uri);
+      const blobUri = recording.getURI();
 
-      setRecording(null);
+      // Convert URI to blob
+      const blobResponse = await fetch(blobUri);
+      const blob = await blobResponse.blob();
 
-      if (Platform.OS === 'web') {
-        // Web: send blob directly
-        transcribeAudioWeb(uri);
-      } else {
-        // Mobile: copy to FileSystem first
-        const fileUri = FileSystem.cacheDirectory + 'recording.m4a';
-        await FileSystem.copyAsync({ from: uri, to: fileUri });
-        setLocalUri(fileUri);
-        playRecording(fileUri);
-        transcribeAudioMobile(fileUri);
+      const formData = new FormData();
+      formData.append("file", new File([blob], "recording.m4a", { type: blob.type }));
+
+      // Send to voice-agent
+      const res = await fetch("http://localhost:3003/voice-agent?session_id=default", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+
+      // Display Whisper transcript first
+      const whisperText = data.transcript || "(Không nhận diện được giọng nói)";
+      setChatHistory(prev => [...prev, { type: "whisper", text: whisperText }]);
+
+      // Display Agent response next
+      const agentReply = data.agent_reply || "(Agent chưa trả lời)";
+      setChatHistory(prev => [...prev, { type: "sm", text: agentReply }]);
+
+      // Optional: log booking info for debug
+      if (data.booking_status) {
+        console.log("Booking API result:", data.booking_status);
       }
+
     } catch (err) {
-      console.log('Error stopping recording', err);
-    }
-  };
-
-  const playRecording = async (uri) => {
-    try {
-      const sound = new Audio.Sound();
-      await sound.loadAsync({ uri });
-      await sound.playAsync();
-    } catch (err) {
-      console.log('Error playing audio', err);
-    }
-  };
-
-  // Mobile transcription
-  const transcribeAudioMobile = async (uri) => {
-    try {
-      setIsProcessing(true);
-      const formData = new FormData();
-      formData.append('file', {
-        uri,
-        name: 'recording.m4a',
-        type: 'audio/m4a',
-      });
-
-      const res = await fetch(WHISPER_URL, {
-        method: 'POST',
-        body: formData,
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-
-      const data = await res.json();
-      setTranscript(data.transcript || 'No transcript returned');
-    } catch (err) {
-      console.log('Error transcribing audio (mobile)', err);
-      setTranscript('Error transcribing audio');
+      console.log("Error processing audio:", err);
+      setChatHistory(prev => [
+        ...prev,
+        { type: "sm", text: "(Lỗi nhận diện audio hoặc agent)" },
+      ]);
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // Web transcription
-  const transcribeAudioWeb = async (blobUri) => {
+  const sendToAgent = async () => {
+    if (!userConfirmed) return;
+
+    setChatHistory(prev => [...prev, { type: "user", text: userConfirmed }]);
+    setUserConfirmed(""); // reset input
+
+    setIsProcessing(true);
     try {
-      setIsProcessing(true);
-      const response = await fetch(blobUri);
-      const blob = await response.blob();
-
-      const formData = new FormData();
-      formData.append('file', new File([blob], 'recording.webm', { type: blob.type }));
-
-      const res = await fetch(WHISPER_URL, {
-        method: 'POST',
-        body: formData,
+      const res = await fetch(AGENT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: userConfirmed }),
       });
-
       const data = await res.json();
-      setTranscript(data.transcript || 'No transcript returned');
+      const agentReply = data.message || "(Agent không trả lời)";
+      setChatHistory(prev => [...prev, { type: "sm", text: agentReply }]);
     } catch (err) {
-      console.log('Error transcribing audio (web)', err);
-      setTranscript('Error transcribing audio');
+      console.log("Agent error:", err);
+      setChatHistory(prev => [...prev, { type: "sm", text: "(Lỗi kết nối Agent)" }]);
     } finally {
       setIsProcessing(false);
+      setWhisperText(""); // clear after sending
     }
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.inner}>
-        <Text style={styles.title}>Mic + Whisper Transcription</Text>
+      <ScrollView contentContainerStyle={styles.inner}>
+        <Text style={styles.title}>Xanh SM Buddy Chat</Text>
 
-        <Button title={isRecording ? 'Recording...' : 'Start Recording'} onPress={startRecording} disabled={isRecording} />
+        <View style={{ flexDirection: "row", marginBottom: 10 }}>
+          <Button title={isRecording ? "Recording..." : "Start Recording"} onPress={startRecording} disabled={isRecording} />
+          <View style={{ width: 10 }} />
+          <Button title="Stop Recording" onPress={stopRecording} disabled={!isRecording} />
+        </View>
 
-        <View style={{ height: 10 }} />
+        {isProcessing && <ActivityIndicator style={{ marginBottom: 10 }} />}
 
-        <Button title="Stop Recording & Transcribe" onPress={stopRecording} disabled={!isRecording} />
+        {whisperText ? (
+          <View style={{ marginVertical: 10 }}>
+            <Text>Whisper heard:</Text>
+            <TextInput
+              style={styles.textInput}
+              value={userConfirmed}
+              onChangeText={setUserConfirmed}
+              placeholder="Edit before sending..."
+            />
+            <Button title="Send to SM Buddy" onPress={sendToAgent} disabled={!userConfirmed} />
+          </View>
+        ) : null}
 
-        {localUri && <Text style={styles.uri}>Saved file: {localUri}</Text>}
-
-        {isProcessing && <ActivityIndicator style={{ marginTop: 10 }} />}
-        {transcript ? <Text style={styles.transcript}>Transcript: {transcript}</Text> : null}
-      </View>
+        <View style={styles.chatContainer}>
+          {chatHistory.map((msg, idx) => (
+            <View
+              key={idx}
+              style={[
+                styles.chatBubble,
+                msg.type === "user"
+                  ? styles.userBubble
+                  : msg.type === "whisper"
+                  ? styles.whisperBubble
+                  : styles.smBubble,
+              ]}
+            >
+              <Text style={styles.chatText}>{msg.text}</Text>
+            </View>
+          ))}
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', backgroundColor: '#f5f5f5' },
-  inner: { padding: 20 },
-  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
-  uri: { marginTop: 20, fontSize: 12, color: '#555' },
-  transcript: { marginTop: 20, fontSize: 16, color: '#222' },
+  container: { flex: 1, backgroundColor: "#f5f5f5" },
+  inner: { padding: 20, flexGrow: 1 },
+  title: { fontSize: 24, fontWeight: "bold", marginBottom: 20, textAlign: "center" },
+  chatContainer: { flex: 1, marginTop: 10 },
+  chatBubble: { padding: 10, marginBottom: 8, borderRadius: 8, maxWidth: "80%" },
+  userBubble: { backgroundColor: "#cce5ff", alignSelf: "flex-end" },
+  whisperBubble: { backgroundColor: "#99ddff", alignSelf: "flex-end" },
+  smBubble: { backgroundColor: "#e2e2e2", alignSelf: "flex-start" },
+  chatText: { fontSize: 16, color: "#222" },
 });
