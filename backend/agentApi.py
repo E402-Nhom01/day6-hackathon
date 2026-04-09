@@ -46,7 +46,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-TEMP_DIR = "temp_audio"
+# Cấu hình thư mục tạm (Dùng đường dẫn tuyệt đối để tránh lỗi Errno 2)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMP_DIR = os.path.join(BASE_DIR, "temp_audio")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 # ========================
@@ -75,11 +77,11 @@ async def call_booking_api(agent_reply_str: str):
         # 2. Chuẩn bị payload cho booking API
         # Chỉ lấy các field mà main.py yêu cầu
         payload = {
-            "user_id": data.get("user_id", "bro_01"),
-            "pickup_text": data.get("pickup_text", "Home"),
+            "user_id": data.get("user_id") or "bro_01",
+            "pickup_text": data.get("pickup_text") or "Home",
             "destination_text": data.get("destination_text"),
-            "vehicle_type": data.get("vehicle_type", "bike"),
-            "current_gps": data.get("current_gps", {})
+            "vehicle_type": data.get("vehicle_type") or "bike",
+            "current_gps": data.get("current_gps") or {}
         }
         
         # 3. Gọi API http://127.0.0.1:8000/api/v1/booking/intent
@@ -98,7 +100,8 @@ async def call_booking_api(agent_reply_str: str):
         # Nếu agent chưa trả về JSON (đang hội thoại bình thường) thì bỏ qua
         return None
     except Exception as e:
-        return {"status": "ERROR", "message": str(e)}
+        print(f"[ERROR] Booking API failed: {e}")
+        return {"status": "ERROR", "message": f"Connection error: {str(e)}"}
 
 
 # ========================
@@ -107,6 +110,7 @@ async def call_booking_api(agent_reply_str: str):
 
 @app.post(
     "/voice-agent",
+    response_model=AgentResponse,
     summary="Voice → Text → Agent",
     description="Nhận file âm thanh, transcribe bằng Whisper, rồi đưa vào Agent xử lý.",
 )
@@ -121,44 +125,44 @@ async def voice_agent(
             detail="Định dạng file không được hỗ trợ. Chỉ chấp nhận: mp3, wav, m4a, flac.",
         )
 
-    file_path = os.path.join(TEMP_DIR, f"{session_id}_{file.filename}")
-
+    # Tạo tên file an toàn: {session_id}_{timestamp}.{ext}
+    ext = os.path.splitext(file.filename)[1] or ".m4a"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_filename = f"{session_id}_{timestamp}{ext}"
+    file_path = os.path.join(TEMP_DIR, safe_filename)
+    
     try:
-        print("[DEBUG] Bước 1: Bắt đầu xử lý file tạm")
-        # 1. Lưu file tạm
+        print(f"[DEBUG] Bước 1: Lưu file tạm an toàn -> {safe_filename}")
+        # 1. Lưu file tạm (Đảm bảo folder tồn tại)
+        os.makedirs(TEMP_DIR, exist_ok=True)
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-
-        print(f"[DEBUG] Bước 2: Bắt đầu Transcribe từ {file_path}")
+            
+        print(f"[DEBUG] Bước 2: Đang Transcribe...")
         # 2. Transcribe audio → text
         transcript = transcribe_audio_file(file_path)
         write_log("Whisper Transcript", transcript)
-        print(f"[Whisper] Transcript: {transcript}")
-
+        
         if not transcript:
             raise HTTPException(
                 status_code=400,
                 detail="Không nhận diện được giọng nói từ file audio.",
             )
 
-        print("[DEBUG] Bước 3: Đang đưa transcript vào Agent")
+        print("[DEBUG] Bước 3: Gửi text vào Agent")
         # 3. Đưa transcript vào Agent
         agent_reply = run_agent(transcript, session_id)
         
-        print("[DEBUG] Bước 4: Gọi Booking API")
+        print("[DEBUG] Bước 4: Kiểm tra Intent Booking")
         # 4. Gọi Booking API nếu có đủ thông tin (JSON)
         booking_res = await call_booking_api(agent_reply)
         
-        print(f"[DEBUG] Kết quả Booking API: {booking_res}")
-        if booking_res:
-            return booking_res
-            
-        print("[DEBUG] Trả về AgentResponse (chưa có intent)")
+        # Consistent Return: Luôn trả về AgentResponse
         return AgentResponse(
             transcript=transcript,
             agent_reply=agent_reply,
             session_id=session_id,
-            booking_status=None
+            booking_status=booking_res
         )
 
     except HTTPException:
@@ -175,6 +179,7 @@ async def voice_agent(
 
 @app.post(
     "/text-agent",
+    response_model=AgentResponse,
     summary="Text → Agent",
     description="Nhận text trực tiếp và đưa vào Agent xử lý.",
 )
@@ -185,14 +190,11 @@ async def text_agent(request: TextRequest):
         # Gọi Booking API nếu có đủ thông tin (JSON)
         booking_res = await call_booking_api(agent_reply)
         
-        if booking_res:
-            return booking_res
-
         return AgentResponse(
             transcript=None,
             agent_reply=agent_reply,
             session_id=request.session_id,
-            booking_status=None
+            booking_status=booking_res
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi hệ thống: {str(e)}")

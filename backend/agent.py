@@ -16,7 +16,8 @@ load_dotenv()
 # ==========================================
 # CẤU HÌNH LOGGING
 # ==========================================
-LOG_DIR = "logs"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True) 
 
 session_time = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -31,7 +32,8 @@ def write_log(role: str, content: str):
 # ==========================================
 
 # 1. Đọc System Prompt
-with open(r"backend\system_prompt.txt", "r", encoding="utf-8") as f:
+prompt_path = os.path.join(BASE_DIR, "system_prompt.txt")
+with open(prompt_path, "r", encoding="utf-8") as f:
     SYSTEM_PROMPT = f.read()
 
 # 2. Khai báo State

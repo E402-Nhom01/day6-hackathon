@@ -27,7 +27,9 @@ async def process_booking(req: BookingRequest):
         return {"status": "INCOMPLETE", "message": "Bro muốn đi đâu?"}
 
     # 1. XỬ LÝ ĐIỂM ĐÓN
-    pickup_text_norm = req.pickup_text.strip().lower()
+    pickup_text = req.pickup_text or "Home"
+    pickup_text_norm = pickup_text.strip().lower()
+    
     if pickup_text_norm in ["đây", "here", "current"]:
         if not is_valid_gps(req.current_gps):
             return {"status": "INCOMPLETE", "message": "Thiếu GPS hiện tại."}
@@ -38,28 +40,54 @@ async def process_booking(req: BookingRequest):
             "lng": req.current_gps["lng"]
         }
     else:
-        p_res = search_location(req.pickup_text, req.user_id)
+        # Mapping Vietnamese -> English for DB
+        p_query = pickup_text
+        if pickup_text_norm == "nhà": p_query = "Home"
+        elif pickup_text_norm == "công ty": p_query = "Company"
+        
+        p_res = search_location(p_query, req.user_id)
         if p_res["status"] == "found":
             pickup_data = p_res["data"]
         else:
-            return {"status": "INCOMPLETE", "message": f"Không tìm thấy điểm đón: {req.pickup_text}"}
+            # Set cứng nếu vẫn không thấy
+            if pickup_text_norm in ["nhà", "home"]:
+                pickup_data = {
+                    "label": "Home",
+                    "address": "Sapphire S1.11, Ocean Park, Gia Lâm, Hà Nội",
+                    "lat": 20.9961015, "lng": 105.944009
+                }
+            else:
+                return {"status": "INCOMPLETE", "message": f"Không tìm thấy điểm đón: {req.pickup_text}"}
 
     # 2. XỬ LÝ ĐIỂM ĐẾN
-    dest_text_norm = req.destination_text.strip().lower()
-    d_res = search_location(req.destination_text, req.user_id)
+    dest_text = req.destination_text
+    dest_text_norm = dest_text.strip().lower()
+    
+    # Mapping Vietnamese -> English for DB
+    d_query = dest_text
+    if dest_text_norm == "nhà": d_query = "Home"
+    elif dest_text_norm == "công ty": d_query = "Company"
+    
+    d_res = search_location(d_query, req.user_id)
 
     if d_res["status"] == "not_found":
-        # Trường hợp địa chỉ đặc biệt chưa lưu
-        if dest_text_norm in ["nhà", "công ty", "home", "company"]:
-            return {
-                "status": "SUCCESS",
-                "action_type": "NEED_SETUP_LOCATION",
-                "message": f"Chưa lưu địa chỉ {req.destination_text}, thiết lập không bro?",
-                "data": {"pickup": pickup_data, "target_label": dest_text_norm}
+        # Check hardcoded fallback first
+        if dest_text_norm in ["nhà", "home"]:
+            dest_data = {
+                "label": "Home",
+                "address": "Sapphire S1.11, Ocean Park, Gia Lâm, Hà Nội",
+                "lat": 20.9961015, "lng": 105.944009
             }
-        return {"status": "INCOMPLETE", "message": f"Không tìm thấy điểm đến: {req.destination_text}"}
-
-    dest_data = d_res["data"]
+        elif dest_text_norm in ["công ty", "company"]:
+            dest_data = {
+                "label": "Company",
+                "address": "VinUni, Gia Lâm, Hà Nội",
+                "lat": 20.9885973, "lng": 105.9460279
+            }
+        else:
+            return {"status": "INCOMPLETE", "message": f"Không tìm thấy điểm đến: {req.destination_text}"}
+    else:
+        dest_data = d_res["data"]
 
     # 3. TÍNH KHOẢNG CÁCH
     distance = get_real_distance(
