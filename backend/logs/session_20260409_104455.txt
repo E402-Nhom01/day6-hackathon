@@ -1,0 +1,14 @@
+[10:44:55] TravelBuddy (Greeting):
+Chào bạn! Mình là trợ lý hỗ trợ đặt xe. Bạn đang muốn đi đâu hoặc có ngân sách bao nhiêu? 😊
+--------------------------------------------------
+[10:46:37] User:
+toi muốn đi chơi
+--------------------------------------------------
+[10:46:46] SM Buddy:
+Dạ chào bạn, rất vui được hỗ trợ bạn di chuyển hôm nay! Để mình điều xe cho bạn, bạn cho mình xin thông tin cụ thể nhé:
+
+1. Bạn đang ở đâu (điểm đón)?
+2. Bạn muốn đi đến địa điểm nào (điểm đến)?
+
+Bạn cung cấp địa chỉ để mình kiểm tra giá cước và điều xe nhanh nhất cho bạn nhé!
+--------------------------------------------------
