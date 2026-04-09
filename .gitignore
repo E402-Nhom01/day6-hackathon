@@ -14,3 +14,4 @@ venv310
 __pycache__
 .gitignore
 .idea
+backend/logs/
