@@ -8,22 +8,43 @@ export default function App() {
   const [sessionId, setSessionId] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+
   const [transcript, setTranscript] = useState("");
   const [correctedText, setCorrectedText] = useState("");
   const [startPoint, setStartPoint] = useState("");
   const [endPoint, setEndPoint] = useState("");
   const [vehicleType, setVehicleType] = useState("");
+
+  const [resolvedStart, setResolvedStart] = useState(null);
+  const [resolvedEnd, setResolvedEnd] = useState(null);
+
   const [needsClarification, setNeedsClarification] = useState(false);
   const [questions, setQuestions] = useState([]);
   const [clarifyInput, setClarifyInput] = useState("");
   const [confirmation, setConfirmation] = useState("pending");
   const [error, setError] = useState("");
 
+  // Generate or reuse session ID
   function ensureSessionId() {
     if (sessionId) return sessionId;
-    const newSessionId = crypto.randomUUID();
-    setSessionId(newSessionId);
-    return newSessionId;
+    const newId = crypto.randomUUID();
+    setSessionId(newId);
+    return newId;
+  }
+
+  // Get current GPS location
+  async function getCurrentLocation() {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) {
+        resolve({ lat: null, lng: null });
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => resolve({ lat: null, lng: null }),
+        { enableHighAccuracy: true, timeout: 5000 }
+      );
+    });
   }
 
   async function startRecording() {
@@ -33,6 +54,8 @@ export default function App() {
     setStartPoint("");
     setEndPoint("");
     setVehicleType("");
+    setResolvedStart(null);
+    setResolvedEnd(null);
     setNeedsClarification(false);
     setQuestions([]);
     setClarifyInput("");
@@ -44,13 +67,11 @@ export default function App() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      const mediaRecorder = new MediaRecorder(stream);
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
       chunksRef.current = [];
 
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          chunksRef.current.push(event.data);
-        }
+        if (event.data.size > 0) chunksRef.current.push(event.data);
       };
 
       mediaRecorder.onstop = async () => {
@@ -62,25 +83,27 @@ export default function App() {
       mediaRecorderRef.current = mediaRecorder;
       setIsRecording(true);
     } catch (err) {
-      setError("Microphone access denied or unavailable.");
+      setError("Cannot access microphone. Please allow permission.");
     }
   }
 
   function stopRecording() {
-    setError("");
-    const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
-      recorder.stop();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
     }
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current.getTracks().forEach((track) => track.stop());
     }
     setIsRecording(false);
   }
 
+  // Main function: Transcribe → Parse
   async function handleTranscribeAndParse(audioBlob, activeSessionId) {
     setIsTranscribing(true);
+    setError("");
+
     try {
+      // 1. Transcribe
       const formData = new FormData();
       formData.append("audio", audioBlob, "recording.webm");
 
@@ -89,45 +112,66 @@ export default function App() {
         body: formData,
       });
 
-      if (!transcribeRes.ok) {
-        throw new Error("Transcription failed.");
-      }
+      if (!transcribeRes.ok) throw new Error("Transcription failed");
 
       const transcribeData = await transcribeRes.json();
       const text = transcribeData.text || "";
       setTranscript(text);
 
+      // 2. Parse
       await sendParse(text, activeSessionId);
     } catch (err) {
-      setError(err.message || "Something went wrong.");
+      setError(err.message || "Processing failed. Please try again.");
     } finally {
       setIsTranscribing(false);
     }
   }
 
+  // Send text to /parse endpoint
   async function sendParse(text, activeSessionId) {
-    const parseRes = await fetch("/parse", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, session_id: activeSessionId }),
-    });
+    try {
+      const location = await getCurrentLocation(); // ✅ ADD THIS
 
-    if (!parseRes.ok) {
-      throw new Error("Parsing failed.");
+      const res = await fetch("/parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: text,
+          session_id: activeSessionId,
+          user_lat: location.lat,   // ✅ SEND GPS
+          user_lng: location.lng,
+        }),
+      });
+
+      if (!res.ok) throw new Error("Parse request failed");
+
+      const data = await res.json();
+
+      setCorrectedText(data.corrected_text || "");
+      setStartPoint(data.start_point || "");
+      setEndPoint(data.end_point || "");
+      setVehicleType(data.vehicle_type || "");
+
+      setResolvedStart(data.resolved_start || null);
+      setResolvedEnd(data.resolved_end || null);
+
+      setNeedsClarification(Boolean(data.needs_clarification));
+      setQuestions(data.questions || []);
+
+      if (data.ready_to_book) {
+        setConfirmation("confirmed");
+      }
+
+    } catch (err) {
+      setError("Failed to understand your request. Please try again.");
+      console.error(err);
     }
-
-    const parseData = await parseRes.json();
-    setCorrectedText(parseData.corrected_text || "");
-    setStartPoint(parseData.start_point || "");
-    setEndPoint(parseData.end_point || "");
-    setVehicleType(parseData.vehicle_type || "");
-    setNeedsClarification(Boolean(parseData.needs_clarification));
-    setQuestions(parseData.questions || []);
   }
 
-  async function handleClarifySubmit(event) {
-    event.preventDefault();
+  async function handleClarifySubmit(e) {
+    e.preventDefault();
     if (!clarifyInput.trim()) return;
+
     setIsTranscribing(true);
     setError("");
     try {
@@ -135,7 +179,7 @@ export default function App() {
       await sendParse(clarifyInput.trim(), activeSessionId);
       setClarifyInput("");
     } catch (err) {
-      setError(err.message || "Something went wrong.");
+      setError("Failed to process clarification.");
     } finally {
       setIsTranscribing(false);
     }
@@ -143,42 +187,34 @@ export default function App() {
 
   function handleConfirm() {
     setConfirmation("confirmed");
+    alert("Booking confirmed! (This is a demo)");
   }
 
   function handleReject() {
     setConfirmation("rejected");
+    alert("Booking cancelled.");
   }
 
   return (
     <div className="app">
       <div className="card">
-        <h1>Voice Ride Booking</h1>
-        <p className="subtitle">
-          Record your request and we will extract the start, end, and vehicle.
-        </p>
+        <h1>🛵 XanhSM Voice Booking</h1>
+        <p className="subtitle">Nói tự nhiên, chúng tôi sẽ hiểu và điền thông tin cho bạn</p>
 
         <div className="controls">
-          <button
-            className="btn primary"
-            onClick={startRecording}
-            disabled={isRecording || isTranscribing}
-          >
-            Start Recording
+          <button className="btn primary" onClick={startRecording} disabled={isRecording || isTranscribing}>
+            🎤 Bắt đầu ghi âm
           </button>
-          <button
-            className="btn"
-            onClick={stopRecording}
-            disabled={!isRecording}
-          >
-            Stop Recording
+          <button className="btn" onClick={stopRecording} disabled={!isRecording}>
+            ⏹ Dừng ghi âm
           </button>
         </div>
 
-        {isTranscribing && <div className="status">Processing...</div>}
+        {isTranscribing && <div className="status">Đang xử lý...</div>}
         {error && <div className="error">{error}</div>}
 
         <div className="transcript">
-          <div className="label">Transcript</div>
+          <div className="label">Transcript (Nguyên bản)</div>
           <div className="value">{transcript || "—"}</div>
         </div>
 
@@ -189,38 +225,26 @@ export default function App() {
 
         <div className="grid">
           <div className="box">
-            <div className="label">Start</div>
+            <div className="label">Điểm đón (Start)</div>
             <div className="value">{startPoint || "—"}</div>
+            {resolvedStart?.full_address && (
+              <div className="sub">{resolvedStart.full_address}</div>
+            )}
           </div>
+
           <div className="box">
-            <div className="label">End</div>
+            <div className="label">Điểm đến (End)</div>
             <div className="value">{endPoint || "—"}</div>
+            {resolvedEnd?.full_address && (
+              <div className="sub">{resolvedEnd.full_address}</div>
+            )}
           </div>
+
           <div className="box">
-            <div className="label">Vehicle</div>
+            <div className="label">Loại xe</div>
             <div className="vehicle">
-              {vehicleType === "car" && (
-                <>
-                  <svg viewBox="0 0 64 32" className="vehicle-icon" aria-hidden="true">
-                    <rect x="6" y="10" width="52" height="12" rx="4" />
-                    <rect x="16" y="4" width="20" height="8" rx="2" />
-                    <circle cx="18" cy="26" r="4" />
-                    <circle cx="46" cy="26" r="4" />
-                  </svg>
-                  <span>Car</span>
-                </>
-              )}
-              {vehicleType === "motorbike" && (
-                <>
-                  <svg viewBox="0 0 64 32" className="vehicle-icon" aria-hidden="true">
-                    <circle cx="16" cy="24" r="6" />
-                    <circle cx="48" cy="24" r="6" />
-                    <path d="M16 24 L26 18 L36 18 L44 24" fill="none" stroke="currentColor" strokeWidth="3" />
-                    <path d="M30 10 L36 18" fill="none" stroke="currentColor" strokeWidth="3" />
-                  </svg>
-                  <span>Motorbike</span>
-                </>
-              )}
+              {vehicleType === "car" && <span>🚗 Ô tô</span>}
+              {vehicleType === "motorbike" && <span>🏍️ Xe máy</span>}
               {!vehicleType && <span>—</span>}
             </div>
           </div>
@@ -228,44 +252,40 @@ export default function App() {
 
         {needsClarification && questions.length > 0 && (
           <div className="clarify">
-            <div className="label">Need Clarification</div>
+            <div className="label">Cần làm rõ thêm</div>
             <ul>
-              {questions.map((q, idx) => (
-                <li key={idx}>{q}</li>
+              {questions.map((q, i) => (
+                <li key={i}>{q}</li>
               ))}
             </ul>
-            <form className="clarify-form" onSubmit={handleClarifySubmit}>
+            <form onSubmit={handleClarifySubmit}>
               <input
-                className="clarify-input"
                 type="text"
-                placeholder="Nhập câu trả lời của bạn..."
+                placeholder="Trả lời ở đây..."
                 value={clarifyInput}
                 onChange={(e) => setClarifyInput(e.target.value)}
               />
-              <button className="btn primary" type="submit" disabled={isTranscribing}>
-                Send
+              <button type="submit" disabled={isTranscribing}>
+                Gửi
               </button>
             </form>
           </div>
         )}
 
         <div className="confirm-row">
-          <button
-            className="btn primary"
-            onClick={handleConfirm}
-            disabled={isTranscribing}
-          >
-            Confirm
+          <button className="btn primary" onClick={handleConfirm} disabled={isTranscribing || !endPoint}>
+            Xác nhận đặt xe
           </button>
           <button className="btn" onClick={handleReject} disabled={isTranscribing}>
-            Reject
+            Hủy
           </button>
-          {confirmation !== "pending" && (
-            <div className="confirm-state">
-              {confirmation === "confirmed" ? "Confirmed" : "Rejected"}
-            </div>
-          )}
         </div>
+
+        {confirmation !== "pending" && (
+          <div className={`confirm-state ${confirmation}`}>
+            {confirmation === "confirmed" ? "✅ Đã xác nhận đặt xe" : "❌ Đã hủy"}
+          </div>
+        )}
       </div>
     </div>
   );
