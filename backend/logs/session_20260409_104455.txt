@@ -24,3 +24,6 @@ Tôi muốn đặt xe đến trường
 [11:00:16] SM Buddy:
 Dạ, để mình hỗ trợ bạn đặt xe đến trường nhé. Bạn cho mình biết **địa chỉ hiện tại của bạn** là ở đâu và **tên trường** bạn muốn đến là gì để mình kiểm tra lộ trình và báo giá chính xác cho bạn nha!
 --------------------------------------------------
+[14:08:26] SYSTEM:
+Người dùng đã ngắt kết nối.
+--------------------------------------------------

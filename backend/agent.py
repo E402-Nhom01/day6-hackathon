@@ -12,7 +12,25 @@ from tools import search_ride_locations
 from dotenv import load_dotenv
 
 load_dotenv()
+import requests
 
+# Whisper server URL
+WHISPER_URL = os.getenv("WHISPER_URL", "http://127.0.0.1:5050/transcribe")
+
+def transcribe_audio_file(file_path: str) -> str:
+    """
+    Sends a local audio file to the Whisper Flask server and returns the transcript.
+    """
+    try:
+        with open(file_path, "rb") as f:
+            files = {"file": (os.path.basename(file_path), f)}
+            response = requests.post(WHISPER_URL, files=files)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("transcript", "(Không có transcript)")
+    except Exception as e:
+        print(f"Error transcribing audio: {e}")
+        return "(Lỗi khi chuyển giọng nói sang văn bản)"
 # ==========================================
 # CẤU HÌNH LOGGING
 # ==========================================
