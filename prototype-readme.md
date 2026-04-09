@@ -13,8 +13,8 @@ Hệ thống AI Voice Assistant giúp người dùng đặt xe XanhSM siêu tố
 
 ### 2. Mock
 
-- **Data:** Sử dụng `users.json` để giả lập Profile người dùng và `services.json` cho bảng giá các loại xe XanhSM (Bike, Standard, Luxury).
-- **UI:** Giao diện mô phỏng ứng dụng XanhSM build bằng **Expo (React Native)** với các thành phần tĩnh cho Map và Danh sách dịch vụ.
+- **Data:** Sử dụng `users.json` để giả lập Profile người dùng.
+- **UI:** Giao diện mô phỏng ứng dụng XanhSM build bằng **Expo (React Native)** với các thành phần tĩnh cho Map.
 
 ### 3. Working
 
@@ -23,14 +23,14 @@ Hệ thống AI Voice Assistant giúp người dùng đặt xe XanhSM siêu tố
 
 - **Backend (BE - The Orchestrator & Decision Maker):** - Hệ thống **FastAPI** tiếp nhận thực thể từ Agent và thực hiện logic ra quyết định: - Đối soát thực thể với dữ liệu cá nhân trong `users.json` (Saved locations). - Nếu không có trong dữ liệu cá nhân, tự động kích hoạt **Tool Map (Geopy)** để tìm kiếm địa chỉ thực tế.
   - Tính toán quãng đường di chuyển bộ thực tế qua **OSRM API**.
-  - Tổng hợp thông tin, tính giá từ `services.json` và trả về gói dữ liệu hoàn chỉnh cho Mobile App.
+  - Tổng hợp thông tin và trả về gói dữ liệu hoàn chỉnh cho Mobile App.
 - **Map Integration:** Kết nối trực tiếp Geopy và OSRM để đảm bảo tính xác thực của vị trí và giá tiền.
 
 ## Links
 
 - **Prototype (UI/Demo):** []
-- **Prompt test log:** []
-- **Video demo (backup):** []
+- **Prompt test log:** [https://drive.google.com/drive/folders/1vsnRai7hlYO_0JxA_5xtwcOgVIgQApmh?usp=drive_link]
+- **Video demo (backup):** [https://drive.google.com/drive/folders/1qPSRlRhL8OANuXyDrGkJgamyHAQFWu3q?usp=sharing]
 
 ## Tools
 
