@@ -9,3 +9,11 @@ whisper
 fastapi
 uvicorn
 python-multipart
+fastapi
+uvicorn
+python-multipart
+requests
+openai-whisper
+pydantic
+python-dotenv
+geopy

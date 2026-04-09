@@ -1,0 +1,5 @@
+[
+  {"id": "bike", "name": "XanhSM Bike", "base_price": 10000, "price_per_km": 4000},
+  {"id": "standard", "name": "XanhSM Standard", "base_price": 20000, "price_per_km": 8000},
+  {"id": "luxury", "name": "XanhSM Luxury", "base_price": 40000, "price_per_km": 15000}
+]

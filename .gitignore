@@ -10,3 +10,7 @@ __pycache__/
 *.mp3
 *.m4a
 venv310
+.DS_Store
+__pycache__
+.gitignore
+.idea
