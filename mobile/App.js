@@ -1,102 +1,90 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { StyleSheet, View, SafeAreaView, StatusBar } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
 import VoiceInputArea from './components/VoiceInputArea';
 import BookingForm from './components/BookingForm';
 import SuccessPopup from './components/SuccessPopup';
+import useVoice from './hooks/useVoice';
 
 export default function App() {
   const [appState, setAppState] = useState('IDLE'); // IDLE | RECORDING | PARSING | VALIDATING | SUCCESS
-  const [partialTranscript, setPartialTranscript] = useState('');
+  const [lastTranscript, setLastTranscript] = useState('');
   const [parsedData, setParsedData] = useState(null);
 
-  // Simulated transcription over time
-  useEffect(() => {
-    let interval;
-    if (appState === 'RECORDING') {
-      const phrases = [
-        "I need a ride...",
-        "I need a ride from...",
-        "I need a ride from Work...",
-        "I need a ride from Work to...",
-        "I need a ride from Work to the airport."
-      ];
-      let step = 0;
-      
-      interval = setInterval(() => {
-        if (step < phrases.length) {
-          setPartialTranscript(phrases[step]);
-          step++;
-        }
-      }, 800);
-    } else {
-      setPartialTranscript('');
-    }
-    return () => clearInterval(interval);
-  }, [appState]);
+  const { isRecording, isProcessing, error, startRecording, stopRecording } = useVoice();
 
-  // Handle stop recording and fake parsing delay
-  const handleStopRecording = () => {
-    setAppState('PARSING');
-    
-    // Simulate backend NLP processing
-    setTimeout(() => {
-      // Hardcoded parsed data based on the mock transcript
-      setParsedData({
-        from: 'Work',
-        to: 'Airport',
-        vehicle: null // Intentional to show empty state/fallback
-      });
-      setAppState('VALIDATING');
-    }, 1500);
+  const handleStartRecording = async () => {
+    setParsedData(null);
+    setLastTranscript('');
+    setAppState('RECORDING');
+    try {
+      await startRecording();
+    } catch (err) {
+      setAppState('IDLE');
+    }
   };
 
-  const handleCreateBooking = (data) => {
-    // In a real app, send data to backend here
+  const handleStopRecording = async () => {
+    setAppState('PARSING');
+    const result = await stopRecording();
+
+    if (result?.transcript) {
+      setLastTranscript(result.transcript);
+    }
+
+    if (result?.parsedData) {
+      setParsedData(result.parsedData);
+      setAppState('VALIDATING');
+      return;
+    }
+
+    setAppState('IDLE');
+  };
+
+  const handleCreateBooking = () => {
     setAppState('SUCCESS');
   };
 
   const handleReset = () => {
     setAppState('IDLE');
     setParsedData(null);
+    setLastTranscript('');
   };
+
+  const transcriptText = error
+    ? error
+    : appState === 'PARSING' || isProcessing
+    ? 'Processing your request...'
+    : lastTranscript;
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
-      <LinearGradient
-        colors={['#ffffff', '#f3f4f6']}
-        style={styles.container}
-      >
+      <LinearGradient colors={['#ffffff', '#f3f4f6']} style={styles.container}>
         <View style={styles.content}>
-          
           {(appState === 'IDLE' || appState === 'RECORDING' || appState === 'PARSING') && (
             <View style={styles.voiceSection}>
-              <VoiceInputArea 
+              <VoiceInputArea
                 title="Where to?"
-                isRecording={appState === 'RECORDING'}
-                onStart={() => setAppState('RECORDING')}
+                isRecording={isRecording || appState === 'RECORDING'}
+                onStart={handleStartRecording}
                 onStop={handleStopRecording}
-                partialTranscript={appState === 'PARSING' ? "Processing your request..." : partialTranscript}
+                partialTranscript={transcriptText}
               />
             </View>
           )}
 
           {appState === 'VALIDATING' && parsedData && (
-            <BookingForm 
+            <BookingForm
               parsedData={parsedData}
               onConfirm={handleCreateBooking}
               onCancel={handleReset}
             />
           )}
-
         </View>
 
-        {appState === 'SUCCESS' && (
-          <SuccessPopup onReset={handleReset} />
-        )}
-
+        {appState === 'SUCCESS' && <SuccessPopup onReset={handleReset} />}
       </LinearGradient>
     </SafeAreaView>
   );
@@ -118,5 +106,5 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: 20,
-  }
+  },
 });

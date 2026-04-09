@@ -30,7 +30,7 @@ class TranscribeResponse(BaseModel):
 
 # Load model (nên để bên ngoài endpoint để tránh load lại nhiều lần)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-MODEL_SIZE = "large-v3"
+MODEL_SIZE = "base"
 print(f"--- Loading model {MODEL_SIZE} ---")
 model = whisper.load_model(MODEL_SIZE, device=DEVICE)
 
