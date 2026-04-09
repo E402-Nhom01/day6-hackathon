@@ -42,9 +42,40 @@ def transcribe_audio_file(file_path: str) -> str:
     result = model.transcribe(
         file_path, 
         fp16=torch.cuda.is_available(), 
-        language="vi"
+        language="vi",
+        condition_on_previous_text=False # Giảm thiểu hallucination lặp lại
     )
-    return result['text'].strip()
+    
+    # Các câu hallucination thường gặp của Whisper cho tiếng Việt khi im lặng
+    hallucinations = [
+        "cảm ơn các bạn",
+        "cảm ơn đã theo dõi",
+        "đăng ký kênh",
+        "nhớ đăng ký kênh",
+        "hẹn gặp lại",
+        "xin chào các bạn",
+        "âm nhạc",
+        "subtitles by",
+        "amara.org",
+        "chúc các bạn"
+    ]
+    
+    valid_segments = []
+    for segment in result.get("segments", []):
+        # Nếu mô hình chắc chắn > 60% là không có tiếng người, ta bỏ qua đoạn đó
+        if segment.get("no_speech_prob", 0) > 0.6:
+            continue
+            
+        seg_text = segment.get("text", "").strip()
+        seg_lower = seg_text.lower()
+        
+        # Nếu segment chứa các câu spam quen thuộc thì bỏ qua
+        if any(h in seg_lower for h in hallucinations) and len(seg_text) < 60:
+            continue
+            
+        valid_segments.append(seg_text)
+
+    return " ".join(valid_segments).strip()
 
 @app.post(
     "/transcribe", 
