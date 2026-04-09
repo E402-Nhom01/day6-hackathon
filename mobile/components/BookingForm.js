@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TextInput, Pressable, ScrollView } from 'react-
 import { MapPin, Navigation, Car, Bike, AlertCircle } from 'lucide-react-native';
 
 export default function BookingForm({ parsedData, onConfirm, onCancel }) {
-    const [destinationA, setDestinationA] = useState(parsedData.from || '');
+    // const [destinationA, setDestinationA] = useState(parsedData.from || '');
     const [destinationB, setDestinationB] = useState(parsedData.to || '');
     const [vehicle, setVehicle] = useState(parsedData.vehicle || null);
 
@@ -24,6 +24,12 @@ export default function BookingForm({ parsedData, onConfirm, onCancel }) {
         }
     }, [parsedData.to]);
 
+    useEffect(() => {
+        if (parsedData.from) setDestinationA(parsedData.from);
+        if (parsedData.to) setDestinationB(parsedData.to);
+        if (parsedData.vehicle) setVehicle(parsedData.vehicle);
+    }, [parsedData]);
+    
     const isMissingVehicle = !vehicle;
     const isValid = destinationA.trim() !== '' && destinationB.trim() !== '' && vehicle;
 

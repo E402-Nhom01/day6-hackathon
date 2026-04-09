@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, SafeAreaView, StatusBar } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-
+import useVoice from './hooks/useVoice';
 import VoiceInputArea from './components/VoiceInputArea';
 import BookingForm from './components/BookingForm';
 import SuccessPopup from './components/SuccessPopup';
@@ -11,47 +11,37 @@ export default function App() {
   const [partialTranscript, setPartialTranscript] = useState('');
   const [parsedData, setParsedData] = useState(null);
 
-  // Simulated transcription over time
-  useEffect(() => {
-    let interval;
-    if (appState === 'RECORDING') {
-      const phrases = [
-        "I need a ride...",
-        "I need a ride from...",
-        "I need a ride from Work...",
-        "I need a ride from Work to...",
-        "I need a ride from Work to the airport."
-      ];
-      let step = 0;
-      
-      interval = setInterval(() => {
-        if (step < phrases.length) {
-          setPartialTranscript(phrases[step]);
-          step++;
-        }
-      }, 800);
-    } else {
-      setPartialTranscript('');
-    }
-    return () => clearInterval(interval);
-  }, [appState]);
+  const {
+    transcript,
+    setTranscript,
+    startRecording,
+    stopRecording,
+    transcribe
+  } = useVoice();
 
-  // Handle stop recording and fake parsing delay
-  const handleStopRecording = () => {
+
+  const handleStopRecording = async () => {
     setAppState('PARSING');
-    
-    // Simulate backend NLP processing
-    setTimeout(() => {
-      // Hardcoded parsed data based on the mock transcript
-      setParsedData({
-        from: 'Work',
-        to: 'Airport',
-        vehicle: null // Intentional to show empty state/fallback
-      });
-      setAppState('VALIDATING');
-    }, 1500);
-  };
 
+    const uri = await stopRecording();
+
+    if (!uri) return;
+
+    try {
+      const data = await transcribe(uri);
+
+      setParsedData({
+        from: data.booking.pickup_location,
+        to: data.booking.dropoff_location,
+        vehicle: data.booking.vehicle_type
+      });
+
+      setAppState('VALIDATING');
+    } catch (e) {
+      console.error(e);
+      setAppState('IDLE');
+    }
+  };
   const handleCreateBooking = (data) => {
     // In a real app, send data to backend here
     setAppState('SUCCESS');
@@ -76,9 +66,16 @@ export default function App() {
               <VoiceInputArea 
                 title="Where to?"
                 isRecording={appState === 'RECORDING'}
-                onStart={() => setAppState('RECORDING')}
+                onStart={async () => {
+                  setAppState('RECORDING');
+                  await startRecording();
+                }}
                 onStop={handleStopRecording}
-                partialTranscript={appState === 'PARSING' ? "Processing your request..." : partialTranscript}
+                partialTranscript={
+                  appState === 'PARSING'
+                    ? "Processing your request..."
+                    : transcript
+}
               />
             </View>
           )}
