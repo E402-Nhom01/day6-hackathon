@@ -18,6 +18,16 @@ from pydantic import BaseModel
 # DeepFilterNet
 from df.enhance import enhance, init_df, load_audio
 
+import logging
+from datetime import datetime
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    datefmt="%H:%M:%S"
+)
+logger = logging.getLogger("xanhsm")
+
 # ----------------------
 # Load .env
 # ----------------------
@@ -76,7 +86,7 @@ except Exception as e:
 # ----------------------
 # Whisper
 # ----------------------
-whisper_model = whisper.load_model("base")
+whisper_model = whisper.load_model("large")
 
 
 def preprocess_audio_with_deepfilter(audio_bytes: bytes) -> bytes:
@@ -268,6 +278,39 @@ def resolve_saved_location(name: str) -> str:
 # ----------------------
 # Main Flow
 # ----------------------
+# ----------------------
+# Simple Intent Detection
+# ----------------------
+def detect_intent(text: str) -> dict:
+    """
+    Simple rule-based intent detection for ride booking.
+    Returns: {"is_ride_booking": True/False}
+    """
+    if not text or len(text.strip()) < 3:
+        return {"is_ride_booking": False}
+
+    text_lower = text.lower().strip()
+
+    # Positive keywords (Vietnamese ride booking phrases)
+    booking_keywords = [
+        "đặt xe", "đi từ", "đi đến", "về", "muốn đi", "chạy", "book", 
+        "xe máy", "ô tô", "xe ô tô", "grab", "be", "xanhsm", "xanh sm",
+        "từ", "đến", "sân bay", "nhà", "công ty", "trường", "bệnh viện"
+    ]
+
+    # Negative / off-topic keywords (optional)
+    off_topic_keywords = ["thời tiết", "bài hát", "tin tức", "hôm nay", "mấy giờ"]
+
+    # Check for strong booking signals
+    has_booking_signal = any(kw in text_lower for kw in booking_keywords)
+
+    # If it contains off-topic words and no booking signal → reject
+    if any(kw in text_lower for kw in off_topic_keywords) and not has_booking_signal:
+        return {"is_ride_booking": False}
+
+    # Default: assume it's ride booking (your app is specialized)
+    return {"is_ride_booking": True}
+
 def run_parse_flow(text: str, session_id: str):
     prev = SESSION_STORE.get(session_id, {"start_point": None, "end_point": None, "vehicle_type": None})
 
@@ -283,6 +326,12 @@ def run_parse_flow(text: str, session_id: str):
 
     SESSION_STORE[session_id] = merged
 
+    logger.info(f"PARSE | session={session_id} | "
+                f"corrected='{corrected[:150]}...' | "
+                f"start='{merged.get('start_point')}' | "
+                f"end='{merged.get('end_point')}' | "
+                f"vehicle={merged.get('vehicle_type')} | "
+                f"clarify={clarification['needs_clarification']}")
     return {
         "session_id": session_id,
         "corrected_text": corrected,
